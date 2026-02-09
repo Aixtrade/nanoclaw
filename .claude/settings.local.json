@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./container-agno/build.sh:*)",
+      "Bash(docker run:*)"
+    ]
+  }
+}
