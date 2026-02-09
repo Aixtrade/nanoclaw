@@ -7,11 +7,14 @@ import { CronExpressionParser } from 'cron-parser';
 
 import {
   ASSISTANT_NAME,
+  API_AUTH_TOKEN,
   DATA_DIR,
+  HTTP_HOST,
   HTTP_PORT,
   IDLE_TIMEOUT,
   IPC_POLL_INTERVAL,
   MAIN_GROUP_FOLDER,
+  MAX_REQUEST_BODY_BYTES,
   STORE_DIR,
   TIMEZONE,
 } from './config.js';
@@ -53,10 +56,29 @@ const queue = new GroupQueue();
 // Maps groupId (folder name used as chatJid) to the current SSE response writer.
 // When a container produces output, we look here first; if no listener, we buffer.
 const outputListeners = new Map<string, (output: ContainerOutput) => void>();
-const messageBuffers = new Map<string, Array<{ text: string; timestamp: string }>>();
+const messageBuffers = new Map<
+  string,
+  Array<{ text: string; timestamp: string }>
+>();
 const pendingPrompts = new Map<string, string>();
 // Callbacks fired when a container run completes (event:done)
 const completionCallbacks = new Map<string, (sessionId?: string) => void>();
+// Only one active SSE request per group to avoid stream collisions.
+const activeSseRequests = new Map<string, string>();
+
+function normalizeGroupId(input: string): string {
+  const safe = input
+    .replace(/[^a-zA-Z0-9_-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase();
+
+  if (!safe || safe === '.' || safe === '..') {
+    throw new Error('Invalid groupId');
+  }
+
+  return safe;
+}
 
 function loadState(): void {
   const agentTs = getRouterState('last_agent_timestamp');
@@ -75,10 +97,7 @@ function loadState(): void {
 }
 
 function saveState(): void {
-  setRouterState(
-    'last_agent_timestamp',
-    JSON.stringify(lastAgentTimestamp),
-  );
+  setRouterState('last_agent_timestamp', JSON.stringify(lastAgentTimestamp));
 }
 
 function registerGroup(jid: string, group: RegisteredGroup): void {
@@ -114,7 +133,10 @@ async function sendMessage(chatJid: string, text: string): Promise<void> {
       messageBuffers.set(chatJid, buffer);
     }
     buffer.push({ text, timestamp: new Date().toISOString() });
-    logger.debug({ chatJid, bufferSize: buffer.length }, 'Message buffered (no SSE listener)');
+    logger.debug(
+      { chatJid, bufferSize: buffer.length },
+      'Message buffered (no SSE listener)',
+    );
   }
 }
 
@@ -142,7 +164,10 @@ async function processPrompt(chatJid: string): Promise<boolean> {
   const resetIdleTimer = () => {
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
-      logger.debug({ group: group.name }, 'Idle timeout, closing container stdin');
+      logger.debug(
+        { group: group.name },
+        'Idle timeout, closing container stdin',
+      );
       queue.closeStdin(chatJid);
     }, IDLE_TIMEOUT);
   };
@@ -151,7 +176,10 @@ async function processPrompt(chatJid: string): Promise<boolean> {
 
   const output = await runAgent(group, prompt, chatJid, async (result) => {
     if (result.result) {
-      const raw = typeof result.result === 'string' ? result.result : JSON.stringify(result.result);
+      const raw =
+        typeof result.result === 'string'
+          ? result.result
+          : JSON.stringify(result.result);
       // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
@@ -168,6 +196,16 @@ async function processPrompt(chatJid: string): Promise<boolean> {
         }
       }
       resetIdleTimer();
+    } else if (result.status === 'success') {
+      // End-of-turn marker from runner.
+      const listener = outputListeners.get(chatJid);
+      if (listener) {
+        listener({
+          status: 'success',
+          result: null,
+          newSessionId: result.newSessionId,
+        });
+      }
     }
 
     if (result.status === 'error') {
@@ -256,7 +294,8 @@ async function runAgent(
         chatJid,
         isMain,
       },
-      (proc, containerName) => queue.registerProcess(chatJid, proc, containerName, group.folder),
+      (proc, containerName) =>
+        queue.registerProcess(chatJid, proc, containerName, group.folder),
       wrappedOnOutput,
     );
 
@@ -614,23 +653,55 @@ async function processTaskIpc(
 function parseBody(req: http.IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    req.on('data', (chunk) => chunks.push(chunk));
+    let total = 0;
+    req.on('data', (chunk: Buffer) => {
+      total += chunk.length;
+      if (total > MAX_REQUEST_BODY_BYTES) {
+        reject(new Error('REQUEST_BODY_TOO_LARGE'));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
     req.on('end', () => resolve(Buffer.concat(chunks).toString()));
     req.on('error', reject);
   });
 }
 
-function jsonResponse(res: http.ServerResponse, status: number, data: unknown): void {
+function jsonResponse(
+  res: http.ServerResponse,
+  status: number,
+  data: unknown,
+): void {
   res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(data));
 }
 
-function sseWrite(res: http.ServerResponse, event: string, data: unknown): void {
+function sseWrite(
+  res: http.ServerResponse,
+  event: string,
+  data: unknown,
+): void {
+  if (res.writableEnded || res.destroyed) return;
   res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
-async function handleChat(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  const body = await parseBody(req);
+async function handleChat(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+): Promise<void> {
+  let body: string;
+  try {
+    body = await parseBody(req);
+  } catch (err) {
+    if (err instanceof Error && err.message === 'REQUEST_BODY_TOO_LARGE') {
+      jsonResponse(res, 413, { error: 'Request body too large' });
+      return;
+    }
+    jsonResponse(res, 400, { error: 'Invalid request body' });
+    return;
+  }
+
   let parsed: { prompt?: string; groupId?: string };
   try {
     parsed = JSON.parse(body);
@@ -640,7 +711,17 @@ async function handleChat(req: http.IncomingMessage, res: http.ServerResponse): 
   }
 
   const prompt = parsed.prompt;
-  const groupId = parsed.groupId || MAIN_GROUP_FOLDER;
+  const rawGroupId =
+    typeof parsed.groupId === 'string' && parsed.groupId.trim()
+      ? parsed.groupId.trim()
+      : MAIN_GROUP_FOLDER;
+  let groupId: string;
+  try {
+    groupId = normalizeGroupId(rawGroupId);
+  } catch {
+    jsonResponse(res, 400, { error: 'Invalid "groupId" field' });
+    return;
+  }
 
   if (!prompt || typeof prompt !== 'string') {
     jsonResponse(res, 400, { error: 'Missing "prompt" field' });
@@ -650,10 +731,17 @@ async function handleChat(req: http.IncomingMessage, res: http.ServerResponse): 
   // Use the folder name as the chatJid key (same convention as WhatsApp JIDs were used)
   const chatJid = groupId;
 
+  if (activeSseRequests.has(chatJid)) {
+    jsonResponse(res, 409, {
+      error: 'Another request is already in progress for this group',
+    });
+    return;
+  }
+
   // Auto-register group if it doesn't exist yet
   if (!registeredGroups[chatJid]) {
     registerGroup(chatJid, {
-      name: groupId,
+      name: rawGroupId,
       folder: groupId,
       trigger: `@${ASSISTANT_NAME}`,
       added_at: new Date().toISOString(),
@@ -661,11 +749,14 @@ async function handleChat(req: http.IncomingMessage, res: http.ServerResponse): 
     });
   }
 
+  const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  activeSseRequests.set(chatJid, requestId);
+
   // Set up SSE response
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive',
+    Connection: 'keep-alive',
   });
 
   // Flush any buffered messages first
@@ -677,55 +768,65 @@ async function handleChat(req: http.IncomingMessage, res: http.ServerResponse): 
     messageBuffers.delete(chatJid);
   }
 
-  // Register SSE listener (replaces any previous one for this group)
+  let pipedRequest = false;
+  let finished = false;
+  const finish = (sessionId?: string) => {
+    if (finished) return;
+    finished = true;
+
+    sseWrite(res, 'done', { sessionId: sessionId || null });
+
+    if (activeSseRequests.get(chatJid) === requestId) {
+      activeSseRequests.delete(chatJid);
+      outputListeners.delete(chatJid);
+      completionCallbacks.delete(chatJid);
+    }
+    res.end();
+  };
+
+  // Register SSE listener (one active request per group)
   outputListeners.set(chatJid, (output: ContainerOutput) => {
     if (output.status === 'error') {
       sseWrite(res, 'error', { error: output.error || 'Unknown error' });
+      finish(output.newSessionId);
     } else if (output.result) {
       sseWrite(res, 'message', { text: output.result });
+    } else {
+      // Null-result markers denote end of this turn.
+      finish(output.newSessionId);
     }
   });
 
   // Register completion callback
   completionCallbacks.set(chatJid, (sessionId?: string) => {
-    sseWrite(res, 'done', { sessionId: sessionId || null });
-    outputListeners.delete(chatJid);
-    completionCallbacks.delete(chatJid);
-    res.end();
+    finish(sessionId);
   });
 
   // Clean up on client disconnect
   req.on('close', () => {
-    outputListeners.delete(chatJid);
-    completionCallbacks.delete(chatJid);
+    if (activeSseRequests.get(chatJid) === requestId) {
+      activeSseRequests.delete(chatJid);
+      outputListeners.delete(chatJid);
+      completionCallbacks.delete(chatJid);
+    }
   });
-
-  // Store prompt and dispatch to queue
-  pendingPrompts.set(chatJid, prompt);
 
   // Try piping to active container first
   if (queue.sendMessage(chatJid, prompt)) {
+    pipedRequest = true;
+    pendingPrompts.delete(chatJid);
     logger.debug({ chatJid }, 'Piped prompt to active container');
-    // For piped messages, we need a completion mechanism.
-    // The idle timer in the existing container will eventually close it.
-    // For now, we set a completion callback that fires when the container round ends.
-    // But since we piped, processPrompt won't be called — output comes via the
-    // existing onOutput callback. We need to handle this differently.
-
-    // When piping to an active container, we rely on the existing streaming
-    // output handler. The SSE listener we just registered will receive output
-    // via the outputListeners map when the container produces results.
-    // We don't have a clean "done" signal for piped messages, so we leave
-    // the SSE open until the client disconnects or the container closes.
-    // Remove the completion callback since it won't fire for piped messages.
-    completionCallbacks.delete(chatJid);
   } else {
     // No active container — enqueue for a new one
+    pendingPrompts.set(chatJid, prompt);
     queue.enqueueMessageCheck(chatJid);
   }
 }
 
-async function handleGetGroups(_req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+async function handleGetGroups(
+  _req: http.IncomingMessage,
+  res: http.ServerResponse,
+): Promise<void> {
   const groups = Object.entries(registeredGroups).map(([jid, group]) => ({
     id: jid,
     name: group.name,
@@ -735,8 +836,22 @@ async function handleGetGroups(_req: http.IncomingMessage, res: http.ServerRespo
   jsonResponse(res, 200, groups);
 }
 
-async function handleCreateGroup(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  const body = await parseBody(req);
+async function handleCreateGroup(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+): Promise<void> {
+  let body: string;
+  try {
+    body = await parseBody(req);
+  } catch (err) {
+    if (err instanceof Error && err.message === 'REQUEST_BODY_TOO_LARGE') {
+      jsonResponse(res, 413, { error: 'Request body too large' });
+      return;
+    }
+    jsonResponse(res, 400, { error: 'Invalid request body' });
+    return;
+  }
+
   let parsed: { name?: string; folder?: string };
   try {
     parsed = JSON.parse(body);
@@ -758,8 +873,14 @@ async function handleCreateGroup(req: http.IncomingMessage, res: http.ServerResp
     return;
   }
 
-  // Sanitize folder name
-  const safeFolder = folder.replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase();
+  let safeFolder: string;
+  try {
+    safeFolder = normalizeGroupId(folder);
+  } catch {
+    jsonResponse(res, 400, { error: 'Invalid "folder" field' });
+    return;
+  }
+
   const chatJid = safeFolder;
 
   if (registeredGroups[chatJid]) {
@@ -778,7 +899,10 @@ async function handleCreateGroup(req: http.IncomingMessage, res: http.ServerResp
   jsonResponse(res, 201, { id: chatJid, name, folder: safeFolder });
 }
 
-async function handleDeleteSession(res: http.ServerResponse, folder: string): Promise<void> {
+async function handleDeleteSession(
+  res: http.ServerResponse,
+  folder: string,
+): Promise<void> {
   const chatJid = folder;
   const state = queue as any;
   const groupState = state.groups?.get(chatJid);
@@ -791,8 +915,18 @@ async function handleDeleteSession(res: http.ServerResponse, folder: string): Pr
   }
 }
 
-function handleHealth(_req: http.IncomingMessage, res: http.ServerResponse): void {
+function handleHealth(
+  _req: http.IncomingMessage,
+  res: http.ServerResponse,
+): void {
   jsonResponse(res, 200, { status: 'ok' });
+}
+
+function isAuthorized(req: http.IncomingMessage): boolean {
+  if (!API_AUTH_TOKEN) return true;
+
+  const auth = req.headers.authorization;
+  return auth === `Bearer ${API_AUTH_TOKEN}`;
 }
 
 function startHttpServer(): void {
@@ -802,6 +936,15 @@ function startHttpServer(): void {
     const method = req.method || 'GET';
 
     try {
+      if (pathname !== '/api/health' && !isAuthorized(req)) {
+        res.writeHead(401, {
+          'Content-Type': 'application/json',
+          'WWW-Authenticate': 'Bearer',
+        });
+        res.end(JSON.stringify({ error: 'Unauthorized' }));
+        return;
+      }
+
       // POST /api/chat
       if (method === 'POST' && pathname === '/api/chat') {
         await handleChat(req, res);
@@ -842,8 +985,8 @@ function startHttpServer(): void {
     }
   });
 
-  server.listen(HTTP_PORT, () => {
-    logger.info({ port: HTTP_PORT }, 'HTTP server listening');
+  server.listen(HTTP_PORT, HTTP_HOST, () => {
+    logger.info({ host: HTTP_HOST, port: HTTP_PORT }, 'HTTP server listening');
   });
 }
 
@@ -879,18 +1022,26 @@ function ensureContainerRuntimeRunning(): void {
 
   // Kill and clean up orphaned NanoClaw containers from previous runs
   try {
-    const output = execSync('docker ps --filter "name=nanoclaw-" --format "{{.Names}}"', {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      encoding: 'utf-8',
-    });
+    const output = execSync(
+      'docker ps --filter "name=nanoclaw-" --format "{{.Names}}"',
+      {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        encoding: 'utf-8',
+      },
+    );
     const orphans = output.trim().split('\n').filter(Boolean);
     for (const name of orphans) {
       try {
         execSync(`docker stop ${name}`, { stdio: 'pipe' });
-      } catch { /* already stopped */ }
+      } catch {
+        /* already stopped */
+      }
     }
     if (orphans.length > 0) {
-      logger.info({ count: orphans.length, names: orphans }, 'Stopped orphaned containers');
+      logger.info(
+        { count: orphans.length, names: orphans },
+        'Stopped orphaned containers',
+      );
     }
   } catch (err) {
     logger.warn({ err }, 'Failed to clean up orphaned containers');

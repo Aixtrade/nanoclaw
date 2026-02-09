@@ -2,6 +2,12 @@ import path from 'path';
 
 export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || 'Andy';
 export const HTTP_PORT = parseInt(process.env.PORT || '3000', 10);
+export const HTTP_HOST = process.env.HTTP_HOST || '127.0.0.1';
+export const API_AUTH_TOKEN = process.env.NANOCLAW_API_TOKEN;
+export const MAX_REQUEST_BODY_BYTES = parseInt(
+  process.env.MAX_REQUEST_BODY_BYTES || '1048576',
+  10,
+);
 export const SCHEDULER_POLL_INTERVAL = 60000;
 
 // Absolute paths needed for container mounts
@@ -21,7 +27,7 @@ export const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
 export const MAIN_GROUP_FOLDER = 'main';
 
 export const CONTAINER_IMAGE =
-  process.env.CONTAINER_IMAGE || 'nanoclaw-agent:latest';
+  process.env.CONTAINER_IMAGE || 'nanoclaw-agent-agno:latest';
 export const CONTAINER_TIMEOUT = parseInt(
   process.env.CONTAINER_TIMEOUT || '1800000',
   10,
@@ -31,10 +37,7 @@ export const CONTAINER_MAX_OUTPUT_SIZE = parseInt(
   10,
 ); // 10MB default
 export const IPC_POLL_INTERVAL = 1000;
-export const IDLE_TIMEOUT = parseInt(
-  process.env.IDLE_TIMEOUT || '1800000',
-  10,
-); // 30min default — how long to keep container alive after last result
+export const IDLE_TIMEOUT = parseInt(process.env.IDLE_TIMEOUT || '1800000', 10); // 30min default — how long to keep container alive after last result
 export const MAX_CONCURRENT_CONTAINERS = Math.max(
   1,
   parseInt(process.env.MAX_CONCURRENT_CONTAINERS || '5', 10) || 5,

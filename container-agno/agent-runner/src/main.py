@@ -110,7 +110,12 @@ async def run_agent_loop(agent: Agent, initial_prompt: str, session_id: str) -> 
             if result_text == "":
                 result_text = None
             log(f"Query done. Result: {result_text[:200] if result_text else 'None'}")
-            write_output("success", result_text, session_id)
+            if result_text is not None:
+                write_output("success", result_text, session_id)
+            # End-of-turn marker for host SSE lifecycle.
+            # The host closes one-shot SSE requests when it receives a
+            # success frame with a null result.
+            write_output("success", None, session_id)
         except Exception as e:
             error_msg = str(e)
             log(f"Agent error: {error_msg}")
