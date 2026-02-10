@@ -1,4 +1,4 @@
-import { ChildProcess } from 'child_process';
+import { ChildProcess, exec } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -284,19 +284,31 @@ export class GroupQueue {
   async shutdown(_gracePeriodMs: number): Promise<void> {
     this.shuttingDown = true;
 
-    // Count active containers but don't kill them — they'll finish on their own
-    // via idle timeout or container timeout. The --rm flag cleans them up on exit.
-    // This prevents WhatsApp reconnection restarts from killing working agents.
     const activeContainers: string[] = [];
-    for (const [jid, state] of this.groups) {
+    for (const [_jid, state] of this.groups) {
       if (state.process && !state.process.killed && state.containerName) {
         activeContainers.push(state.containerName);
       }
     }
 
+    if (activeContainers.length > 0) {
+      logger.info(
+        { count: activeContainers.length, names: activeContainers },
+        'Stopping active containers',
+      );
+      await Promise.allSettled(
+        activeContainers.map(
+          (name) =>
+            new Promise<void>((resolve) => {
+              exec(`docker stop ${name}`, { timeout: 10000 }, () => resolve());
+            }),
+        ),
+      );
+    }
+
     logger.info(
-      { activeCount: this.activeCount, detachedContainers: activeContainers },
-      'GroupQueue shutting down (containers detached, not killed)',
+      { activeCount: this.activeCount },
+      'GroupQueue shutdown complete',
     );
   }
 }

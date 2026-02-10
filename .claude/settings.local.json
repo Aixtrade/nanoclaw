@@ -2,7 +2,21 @@
   "permissions": {
     "allow": [
       "Bash(./container-agno/build.sh:*)",
-      "Bash(docker run:*)"
+      "Bash(docker run:*)",
+      "Bash(find:*)",
+      "WebSearch",
+      "WebFetch(domain:v2.tauri.app)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:crates.io)",
+      "WebFetch(domain:marcin.codes)",
+      "Bash(curl:*)",
+      "Bash(sh:*)",
+      "Bash(source:*)",
+      "Bash(python3:*)",
+      "Bash(npm install:*)",
+      "Bash(cargo check:*)",
+      "Bash(npm run build:*)",
+      "Bash(cargo build:*)"
     ]
   }
 }

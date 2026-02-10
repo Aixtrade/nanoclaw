@@ -1,0 +1,22 @@
+[package]
+name = "nanoclaw-desktop"
+version = "1.0.0"
+edition = "2021"
+
+[lib]
+name = "nanoclaw_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+nix = { version = "0.29", features = ["signal"] }
+
+[profile.release]
+strip = true
+lto = true

@@ -935,6 +935,19 @@ function startHttpServer(): void {
     const pathname = url.pathname;
     const method = req.method || 'GET';
 
+    // CORS for desktop app (Tauri WebView)
+    const origin = req.headers.origin;
+    if (origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    }
+    if (method === 'OPTIONS') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
     try {
       if (pathname !== '/api/health' && !isAuthorized(req)) {
         res.writeHead(401, {
