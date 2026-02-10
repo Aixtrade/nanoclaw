@@ -27,6 +27,7 @@
     nodeVersion: string;
     dockerRunning: boolean;
     containerImageBuilt: boolean;
+    containerResourcesReady: boolean;
     apiKeyConfigured: boolean;
     userDataDir: string;
   }
@@ -55,7 +56,13 @@
   let unlistenStopped: (() => void) | null = null;
 
   function allChecksPass(s: SetupStatus): boolean {
-    return s.nodeInstalled && s.dockerRunning && s.containerImageBuilt && s.apiKeyConfigured;
+    return (
+      s.nodeInstalled &&
+      s.dockerRunning &&
+      s.containerResourcesReady &&
+      s.containerImageBuilt &&
+      s.apiKeyConfigured
+    );
   }
 
   async function init() {

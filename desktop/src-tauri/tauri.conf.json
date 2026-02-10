@@ -7,7 +7,7 @@
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "mkdir -p ../../prod_node_modules/node_modules && npm run dev",
-    "beforeBuildCommand": "npm run build"
+    "beforeBuildCommand": "npm --prefix .. run build && bash ../scripts/stage-prod-deps.sh && npm run build"
   },
   "app": {
     "macOSPrivateApi": true,
@@ -24,7 +24,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:3000 http://localhost:3000; style-src 'self' 'unsafe-inline'"
+      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; style-src 'self' 'unsafe-inline'"
     }
   },
   "bundle": {

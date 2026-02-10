@@ -38,6 +38,7 @@ struct SetupStatus {
     node_version: String,
     docker_running: bool,
     container_image_built: bool,
+    container_resources_ready: bool,
     api_key_configured: bool,
     user_data_dir: String,
 }
@@ -597,6 +598,9 @@ fn check_setup(app: AppHandle) -> SetupStatus {
         .map(|s| s.success())
         .unwrap_or(false);
 
+    // Check required bundled resource for image build
+    let container_resources_ready = bundle.join("container-agno").exists();
+
     // Check model credentials configured
     let api_key_configured = {
         let env_vars = load_user_env(&data);
@@ -612,14 +616,12 @@ fn check_setup(app: AppHandle) -> SetupStatus {
                 && has_value("AGNO_BASE_URL"))
     };
 
-    // Also check if container-agno exists in bundle dir (for image building)
-    let _container_dir_exists = bundle.join("container-agno").exists();
-
     SetupStatus {
         node_installed,
         node_version,
         docker_running,
         container_image_built,
+        container_resources_ready,
         api_key_configured,
         user_data_dir: data.to_string_lossy().to_string(),
     }

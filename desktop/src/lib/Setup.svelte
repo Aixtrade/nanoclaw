@@ -6,6 +6,7 @@
     nodeVersion: string;
     dockerRunning: boolean;
     containerImageBuilt: boolean;
+    containerResourcesReady: boolean;
     apiKeyConfigured: boolean;
     userDataDir: string;
   }
@@ -37,6 +38,7 @@
     status !== null &&
       status.nodeInstalled &&
       status.dockerRunning &&
+      status.containerResourcesReady &&
       status.containerImageBuilt &&
       status.apiKeyConfigured
   );
@@ -168,6 +170,23 @@
             {/if}
             {#if buildOutput}
               <pre class="build-output">{buildOutput}</pre>
+            {/if}
+          </div>
+        </div>
+
+        <!-- Bundled Resources -->
+        <div class="check-row">
+          <span class="icon"
+            class:pass={status.containerResourcesReady}
+            class:fail={!status.containerResourcesReady}>
+            {status.containerResourcesReady ? "✓" : "✗"}
+          </span>
+          <div class="check-info">
+            <span class="check-label">Bundled Resources</span>
+            {#if status.containerResourcesReady}
+              <span class="muted">container-agno available</span>
+            {:else}
+              <span class="hint">Missing container-agno resource in app bundle.</span>
             {/if}
           </div>
         </div>
