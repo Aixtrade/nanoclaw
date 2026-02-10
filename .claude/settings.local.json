@@ -16,7 +16,8 @@
       "Bash(npm install:*)",
       "Bash(cargo check:*)",
       "Bash(npm run build:*)",
-      "Bash(cargo build:*)"
+      "Bash(cargo build:*)",
+      "Bash(export PATH=\"$HOME/.cargo/bin:$PATH\")"
     ]
   }
 }

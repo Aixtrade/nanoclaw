@@ -1,6 +1,7 @@
 <script lang="ts">
   import { listen } from "@tauri-apps/api/event";
   import { invoke } from "@tauri-apps/api/core";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import { onMount } from "svelte";
 
   import Sidebar from "./lib/Sidebar.svelte";
@@ -189,6 +190,16 @@
   function handleGroupsChanged(newGroups: Group[]) {
     groups = newGroups;
   }
+
+  function handleDrag(e: MouseEvent) {
+    if (e.button === 0 && e.detail === 1) {
+      getCurrentWindow().startDragging();
+    }
+  }
+
+  function handleDragDblClick() {
+    getCurrentWindow().toggleMaximize();
+  }
 </script>
 
 <div class="app">
@@ -201,6 +212,8 @@
     onGroupsChanged={handleGroupsChanged}
   />
   <main class="main">
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="drag-region" onmousedown={handleDrag} ondblclick={handleDragDblClick}></div>
     <div class="chat-area">
       <Chat {messages} {streaming} {streamText} />
       <Input disabled={!backendReady || streaming} onSend={handleSend} />
@@ -220,6 +233,11 @@
     display: flex;
     flex-direction: column;
     min-width: 0;
+  }
+
+  .drag-region {
+    height: 38px;
+    min-height: 38px;
   }
 
   .chat-area {

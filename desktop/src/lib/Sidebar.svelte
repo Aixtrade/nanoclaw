@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tick } from "svelte";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import { getGroups, createGroup, type Group } from "./api";
 
   interface Props {
@@ -53,9 +54,21 @@
       newName = "";
     }
   }
+
+  function handleDrag(e: MouseEvent) {
+    if (e.button === 0 && e.detail === 1) {
+      getCurrentWindow().startDragging();
+    }
+  }
+
+  function handleDragDblClick() {
+    getCurrentWindow().toggleMaximize();
+  }
 </script>
 
 <aside class="sidebar">
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="drag-region" onmousedown={handleDrag} ondblclick={handleDragDblClick}></div>
   <div class="header">
     <span class="title">Groups</span>
     <button
@@ -109,11 +122,16 @@
     height: 100%;
   }
 
+  .drag-region {
+    height: 38px;
+    min-height: 38px;
+  }
+
   .header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 12px 14px;
+    padding: 8px 14px;
     border-bottom: 1px solid var(--border);
   }
 

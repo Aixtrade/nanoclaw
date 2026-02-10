@@ -403,6 +403,18 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             {
                 app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
+                // Accessory policy removes fullscreen capability from windows.
+                // Re-enable it so the green traffic-light button offers fullscreen.
+                if let Some(window) = app.get_webview_window("main") {
+                    use objc2_app_kit::{NSWindow, NSWindowCollectionBehavior};
+                    let ns_ptr = window.ns_window().unwrap();
+                    let ns_win: &NSWindow = unsafe { &*(ns_ptr as *const NSWindow) };
+                    let behavior = ns_win.collectionBehavior();
+                    ns_win.setCollectionBehavior(
+                        behavior | NSWindowCollectionBehavior::FullScreenPrimary,
+                    );
+                }
             }
 
             // Build tray menu

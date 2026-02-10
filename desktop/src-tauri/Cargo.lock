@@ -2024,6 +2024,8 @@ name = "nanoclaw-desktop"
 version = "1.0.0"
 dependencies = [
  "nix",
+ "objc2",
+ "objc2-app-kit",
  "serde",
  "serde_json",
  "tauri",
