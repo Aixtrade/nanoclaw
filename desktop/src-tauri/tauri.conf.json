@@ -6,7 +6,7 @@
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "mkdir -p ../../prod_node_modules/node_modules && npm run dev",
     "beforeBuildCommand": "npm run build"
   },
   "app": {
@@ -29,10 +29,15 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["dmg"],
     "icon": ["icons/icon.png"],
     "macOS": {
       "minimumSystemVersion": "13.0"
+    },
+    "resources": {
+      "../../dist": "dist",
+      "../../prod_node_modules/node_modules": "node_modules",
+      "../../container-agno": "container-agno"
     }
   }
 }

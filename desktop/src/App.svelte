@@ -8,6 +8,7 @@
   import Chat from "./lib/Chat.svelte";
   import Input from "./lib/Input.svelte";
   import StatusBar from "./lib/StatusBar.svelte";
+  import Setup from "./lib/Setup.svelte";
   import {
     streamChat,
     getGroups,
@@ -20,6 +21,18 @@
     role: "user" | "agent";
     text: string;
   }
+
+  interface SetupStatus {
+    nodeInstalled: boolean;
+    nodeVersion: string;
+    dockerRunning: boolean;
+    containerImageBuilt: boolean;
+    apiKeyConfigured: boolean;
+    userDataDir: string;
+  }
+
+  let setupComplete = $state(false);
+  let checkingSetup = $state(true);
 
   let groups = $state<Group[]>([]);
   let activeGroup = $state("main");
@@ -36,67 +49,85 @@
     backendReady ? "running" : streaming ? "starting" : "stopped"
   );
 
-  let sidebar: Sidebar;
+  let disposed = false;
+  let healthCheck: ReturnType<typeof setInterval> | null = null;
+  let unlistenReady: (() => void) | null = null;
+  let unlistenStopped: (() => void) | null = null;
 
-  onMount(() => {
-    let disposed = false;
-    let healthCheck: ReturnType<typeof setInterval> | null = null;
-    let unlistenReady: (() => void) | null = null;
-    let unlistenStopped: (() => void) | null = null;
+  function allChecksPass(s: SetupStatus): boolean {
+    return s.nodeInstalled && s.dockerRunning && s.containerImageBuilt && s.apiKeyConfigured;
+  }
 
-    const init = async () => {
-      try {
-        const config = await invoke<{ baseUrl: string; authToken: string | null }>(
-          "get_backend_config"
-        );
-        configureApi(config);
-      } catch {
-        // fallback to default API base in api.ts
+  async function init() {
+    try {
+      const config = await invoke<{ baseUrl: string; authToken: string | null }>(
+        "get_backend_config"
+      );
+      configureApi(config);
+    } catch {
+      // fallback to default API base in api.ts
+    }
+
+    try {
+      unlistenReady = await listen("backend-ready", () => {
+        backendReady = true;
+        loadGroups();
+      });
+
+      unlistenStopped = await listen("backend-stopped", () => {
+        backendReady = false;
+      });
+
+      if (disposed) {
+        unlistenReady();
+        unlistenStopped();
+        return;
       }
+    } catch {
+      // event bridge unavailable; health polling still covers readiness
+    }
 
-      try {
-        unlistenReady = await listen("backend-ready", () => {
+    // Check initial status
+    try {
+      backendReady = await invoke<boolean>("get_backend_status");
+    } catch {
+      backendReady = false;
+    }
+
+    if (backendReady) {
+      loadGroups();
+    }
+
+    // Also poll health to catch backend that started before event listeners attached
+    healthCheck = setInterval(async () => {
+      if (!backendReady) {
+        const healthy = await checkHealth();
+        if (healthy) {
           backendReady = true;
           loadGroups();
-        });
-
-        unlistenStopped = await listen("backend-stopped", () => {
-          backendReady = false;
-        });
-
-        if (disposed) {
-          unlistenReady();
-          unlistenStopped();
-          return;
         }
-      } catch {
-        // event bridge unavailable; health polling still covers readiness
       }
+    }, 2000);
+  }
 
-      // Check initial status
-      try {
-        backendReady = await invoke<boolean>("get_backend_status");
-      } catch {
-        backendReady = false;
-      }
-
-      if (backendReady) {
-        loadGroups();
-      }
-
-      // Also poll health to catch backend that started before event listeners attached
-      healthCheck = setInterval(async () => {
-        if (!backendReady) {
-          const healthy = await checkHealth();
-          if (healthy) {
-            backendReady = true;
-            loadGroups();
-          }
-        }
-      }, 2000);
-    };
-
+  function handleSetupComplete() {
+    setupComplete = true;
     init();
+  }
+
+  onMount(() => {
+    invoke<SetupStatus>("check_setup").then((s) => {
+      setupComplete = allChecksPass(s);
+      checkingSetup = false;
+      if (setupComplete) {
+        init();
+      }
+    }).catch(() => {
+      // If check_setup fails (e.g. dev mode without command), skip setup gate
+      setupComplete = true;
+      checkingSetup = false;
+      init();
+    });
 
     return () => {
       disposed = true;
@@ -202,27 +233,42 @@
   }
 </script>
 
-<div class="app">
-  <Sidebar
-    bind:this={sidebar}
-    {groups}
-    {activeGroup}
-    {backendReady}
-    onSelectGroup={selectGroup}
-    onGroupsChanged={handleGroupsChanged}
-  />
-  <main class="main">
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="drag-region" onmousedown={handleDrag} ondblclick={handleDragDblClick}></div>
-    <div class="chat-area">
-      <Chat {messages} {streaming} {streamText} />
-      <Input disabled={!backendReady || streaming} onSend={handleSend} />
-    </div>
-    <StatusBar {status} />
-  </main>
-</div>
+{#if checkingSetup}
+  <div class="loading">
+    <p>Loading...</p>
+  </div>
+{:else if !setupComplete}
+  <Setup onComplete={handleSetupComplete} />
+{:else}
+  <div class="app">
+    <Sidebar
+      {groups}
+      {activeGroup}
+      {backendReady}
+      onSelectGroup={selectGroup}
+      onGroupsChanged={handleGroupsChanged}
+    />
+    <main class="main">
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="drag-region" onmousedown={handleDrag} ondblclick={handleDragDblClick}></div>
+      <div class="chat-area">
+        <Chat {messages} {streaming} {streamText} />
+        <Input disabled={!backendReady || streaming} onSend={handleSend} />
+      </div>
+      <StatusBar {status} />
+    </main>
+  </div>
+{/if}
 
 <style>
+  .loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-muted);
+  }
+
   .app {
     display: flex;
     height: 100%;

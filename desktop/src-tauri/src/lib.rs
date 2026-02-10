@@ -24,13 +24,121 @@ struct BackendConfig {
     auth_token: Option<String>,
 }
 
-fn project_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("NANOCLAW_DIR") {
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DirConfig {
+    bundle_dir: String,
+    user_data_dir: String,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct SetupStatus {
+    node_installed: bool,
+    node_version: String,
+    docker_running: bool,
+    container_image_built: bool,
+    api_key_configured: bool,
+    user_data_dir: String,
+}
+
+/// macOS GUI apps don't inherit the user's shell PATH.
+/// Resolve the full PATH from an interactive login shell and set it for this process,
+/// so all Command::new() calls can find node, docker, etc.
+/// Uses -i (interactive) so that .zshrc/.bashrc are sourced (needed for nvm, etc.).
+fn fix_path_env() {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    // -i -l: interactive login — sources .zprofile/.zshrc so nvm, pyenv, etc. are loaded
+    if let Ok(output) = Command::new(&shell)
+        .args(["-i", "-l", "-c", "echo $PATH"])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+    {
+        if output.status.success() {
+            let raw = String::from_utf8_lossy(&output.stdout);
+            // Interactive shells may print extra lines (motd, etc.) — take the last non-empty line
+            let shell_path = raw
+                .lines()
+                .rev()
+                .find(|l| !l.trim().is_empty() && l.contains('/'))
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if !shell_path.is_empty() {
+                std::env::set_var("PATH", &shell_path);
+                return;
+            }
+        }
+    }
+
+    // Fallback: append common macOS binary locations
+    let current = std::env::var("PATH").unwrap_or_default();
+    let extra = [
+        "/opt/homebrew/bin",
+        "/opt/homebrew/sbin",
+        "/usr/local/bin",
+        "/usr/local/sbin",
+    ];
+    let combined = format!("{}:{}", current, extra.join(":"));
+    std::env::set_var("PATH", &combined);
+}
+
+fn is_release_build() -> bool {
+    // CARGO_MANIFEST_DIR is baked at compile time.
+    // In dev it points to a real path; in packaged .app it doesn't exist.
+    !PathBuf::from(env!("CARGO_MANIFEST_DIR")).exists()
+}
+
+fn bundle_dir(app: &AppHandle) -> PathBuf {
+    if let Ok(dir) = std::env::var("NANOCLAW_BUNDLE_DIR") {
         return PathBuf::from(dir);
     }
-    // From desktop/src-tauri/ go up two levels to project root
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    manifest.parent().unwrap().parent().unwrap().to_path_buf()
+    if is_release_build() {
+        app.path()
+            .resource_dir()
+            .expect("Failed to resolve resource dir")
+    } else {
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        manifest.parent().unwrap().parent().unwrap().to_path_buf()
+    }
+}
+
+fn user_data_dir(app: &AppHandle) -> PathBuf {
+    if let Ok(dir) = std::env::var("NANOCLAW_DATA_DIR") {
+        return PathBuf::from(dir);
+    }
+    if is_release_build() {
+        // ~/Library/Application Support/com.nanoclaw.desktop/
+        app.path()
+            .app_data_dir()
+            .expect("Failed to resolve app data dir")
+    } else {
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        manifest.parent().unwrap().parent().unwrap().to_path_buf()
+    }
+}
+
+/// Read .env file from user data dir and return key=value pairs
+fn load_user_env(data_dir: &PathBuf) -> Vec<(String, String)> {
+    let env_path = data_dir.join(".env");
+    let mut pairs = Vec::new();
+    if let Ok(content) = std::fs::read_to_string(&env_path) {
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            if let Some(eq_pos) = trimmed.find('=') {
+                let key = trimmed[..eq_pos].trim().to_string();
+                let val = trimmed[eq_pos + 1..].trim().to_string();
+                if !key.is_empty() {
+                    pairs.push((key, val));
+                }
+            }
+        }
+    }
+    pairs
 }
 
 fn backend_host() -> String {
@@ -56,34 +164,90 @@ fn backend_auth_token() -> Option<String> {
 
 fn is_backend_healthy(host: &str, port: u16) -> bool {
     let addr = format!("{}:{}", host, port);
-    let socket = match addr.to_socket_addrs().ok().and_then(|mut a| a.next()) {
-        Some(s) => s,
-        None => return false,
-    };
-
-    let mut stream = match TcpStream::connect_timeout(&socket, Duration::from_millis(500)) {
-        Ok(s) => s,
+    let sockets: Vec<_> = match addr.to_socket_addrs() {
+        Ok(iter) => iter.collect(),
         Err(_) => return false,
     };
 
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
-    let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
-
-    let request = format!(
-        "GET /api/health HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
-        host
-    );
-
-    if stream.write_all(request.as_bytes()).is_err() {
+    if sockets.is_empty() {
         return false;
     }
 
-    let mut response = String::new();
-    if stream.read_to_string(&mut response).is_err() {
-        return false;
+    for socket in sockets {
+        let mut stream = match TcpStream::connect_timeout(&socket, Duration::from_millis(1500)) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        let _ = stream.set_read_timeout(Some(Duration::from_millis(1500)));
+        let _ = stream.set_write_timeout(Some(Duration::from_millis(1500)));
+
+        let request = format!(
+            "GET /api/health HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+            host
+        );
+
+        if stream.write_all(request.as_bytes()).is_err() {
+            continue;
+        }
+
+        let mut response = String::new();
+        if stream.read_to_string(&mut response).is_err() {
+            continue;
+        }
+
+        if response.starts_with("HTTP/1.1 200") || response.starts_with("HTTP/1.0 200") {
+            return true;
+        }
     }
 
-    response.starts_with("HTTP/1.1 200") || response.starts_with("HTTP/1.0 200")
+    false
+}
+
+fn is_nanoclaw_backend_listening_on_port(bundle: &PathBuf) -> bool {
+    let port = backend_port();
+    let lsof_output = Command::new("lsof")
+        .args([
+            "-nP",
+            &format!("-iTCP:{}", port),
+            "-sTCP:LISTEN",
+            "-t",
+        ])
+        .output();
+
+    let output = match lsof_output {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+
+    let backend_entry = bundle.join("dist/index.js");
+    let backend_entry_text = backend_entry.to_string_lossy();
+
+    let pids = String::from_utf8_lossy(&output.stdout);
+    for line in pids.lines().filter(|v| !v.trim().is_empty()) {
+        let pid = match line.trim().parse::<i32>() {
+            Ok(v) if v > 0 => v,
+            _ => continue,
+        };
+
+        let cmd_output = Command::new("ps")
+            .args(["-p", &pid.to_string(), "-o", "command="])
+            .output();
+
+        let cmd = match cmd_output {
+            Ok(v) => String::from_utf8_lossy(&v.stdout).trim().to_string(),
+            Err(_) => String::new(),
+        };
+
+        let is_nanoclaw_backend =
+            cmd.contains("node") && cmd.contains(backend_entry_text.as_ref());
+
+        if is_nanoclaw_backend {
+            return true;
+        }
+    }
+
+    false
 }
 
 fn wait_for_backend_ready(app: AppHandle, state: Arc<Mutex<BackendState>>) {
@@ -138,7 +302,7 @@ fn mark_backend_ready(app: &AppHandle, state: &Arc<Mutex<BackendState>>) {
     }
 }
 
-fn kill_orphan_backend_on_port(root: &PathBuf) {
+fn kill_orphan_backend_on_port(bundle: &PathBuf) {
     let port = backend_port();
     let lsof_output = Command::new("lsof")
         .args([
@@ -154,8 +318,7 @@ fn kill_orphan_backend_on_port(root: &PathBuf) {
         Err(_) => return,
     };
 
-    let root_text = root.to_string_lossy();
-    let backend_entry = root.join("dist/index.js");
+    let backend_entry = bundle.join("dist/index.js");
     let backend_entry_text = backend_entry.to_string_lossy();
 
     let pids = String::from_utf8_lossy(&output.stdout);
@@ -174,9 +337,8 @@ fn kill_orphan_backend_on_port(root: &PathBuf) {
             Err(_) => String::new(),
         };
 
-        let is_nanoclaw_backend = cmd.contains("node")
-            && cmd.contains(backend_entry_text.as_ref())
-            && cmd.contains(root_text.as_ref());
+        let is_nanoclaw_backend =
+            cmd.contains("node") && cmd.contains(backend_entry_text.as_ref());
 
         if is_nanoclaw_backend {
             let _ = signal::kill(Pid::from_raw(pid), Signal::SIGTERM);
@@ -185,8 +347,9 @@ fn kill_orphan_backend_on_port(root: &PathBuf) {
 }
 
 fn spawn_backend(app: &AppHandle, state: &Arc<Mutex<BackendState>>) {
-    let root = project_dir();
-    let node_entry = root.join("dist/index.js");
+    let bundle = bundle_dir(app);
+    let data = user_data_dir(app);
+    let node_entry = bundle.join("dist/index.js");
     let host = backend_host();
     let port = backend_port();
 
@@ -215,6 +378,17 @@ fn spawn_backend(app: &AppHandle, state: &Arc<Mutex<BackendState>>) {
         return;
     }
 
+    // Health checks can occasionally miss a backend during startup transitions.
+    // Fallback to process-based detection so we avoid spawning a duplicate.
+    if is_nanoclaw_backend_listening_on_port(&bundle) {
+        eprintln!(
+            "Backend already listening at {}:{}; skipping local spawn",
+            host, port
+        );
+        mark_backend_ready(app, state);
+        return;
+    }
+
     if !node_entry.exists() {
         eprintln!(
             "Backend not built: {} not found. Run 'npm run build' in project root first.",
@@ -223,12 +397,20 @@ fn spawn_backend(app: &AppHandle, state: &Arc<Mutex<BackendState>>) {
         return;
     }
 
-    let child = Command::new("node")
-        .arg(&node_entry)
-        .current_dir(&root)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn();
+    let mut cmd = Command::new("node");
+    cmd.arg(&node_entry)
+        .current_dir(&data) // process.cwd() = user data dir
+        .env("NANOCLAW_BUNDLE_DIR", &bundle)
+        .env("NANOCLAW_DATA_DIR", &data);
+
+    // Load .env from user data dir and pass as env vars
+    for (key, val) in load_user_env(&data) {
+        cmd.env(&key, &val);
+    }
+
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    let child = cmd.spawn();
 
     match child {
         Ok(mut child) => {
@@ -280,7 +462,7 @@ fn spawn_backend(app: &AppHandle, state: &Arc<Mutex<BackendState>>) {
     }
 }
 
-fn kill_backend(state: &Arc<Mutex<BackendState>>) {
+fn kill_backend(app: &AppHandle, state: &Arc<Mutex<BackendState>>) {
     let mut s = state.lock().unwrap();
     if let Some(ref child) = s.child {
         let pid = child.id() as i32;
@@ -293,9 +475,9 @@ fn kill_backend(state: &Arc<Mutex<BackendState>>) {
     drop(s);
 
     // Also stop any orphaned nanoclaw containers
-    std::thread::spawn(|| {
-        let root = project_dir();
-        kill_orphan_backend_on_port(&root);
+    let bundle = bundle_dir(app);
+    std::thread::spawn(move || {
+        kill_orphan_backend_on_port(&bundle);
 
         let output = Command::new("docker")
             .args(["ps", "--filter", "name=nanoclaw-", "--format", "{{.Names}}"])
@@ -369,15 +551,152 @@ fn restart_backend(
     state: tauri::State<Arc<Mutex<BackendState>>>,
 ) -> Result<(), String> {
     let state = Arc::clone(&state);
-    kill_backend(&state);
+    kill_backend(&app, &state);
     wait_for_backend_exit(&state, Duration::from_secs(5));
     spawn_backend(&app, &state);
     Ok(())
 }
 
 #[tauri::command]
-fn get_project_dir() -> String {
-    project_dir().to_string_lossy().to_string()
+fn get_dirs(app: AppHandle) -> DirConfig {
+    DirConfig {
+        bundle_dir: bundle_dir(&app).to_string_lossy().to_string(),
+        user_data_dir: user_data_dir(&app).to_string_lossy().to_string(),
+    }
+}
+
+#[tauri::command]
+fn check_setup(app: AppHandle) -> SetupStatus {
+    let data = user_data_dir(&app);
+    let bundle = bundle_dir(&app);
+
+    // Check Node.js
+    let (node_installed, node_version) = match Command::new("node").arg("--version").output() {
+        Ok(output) if output.status.success() => {
+            let ver = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            (true, ver)
+        }
+        _ => (false, String::new()),
+    };
+
+    // Check Docker running
+    let docker_running = Command::new("docker")
+        .args(["info"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    // Check container image built
+    let container_image_built = Command::new("docker")
+        .args(["image", "inspect", "nanoclaw-agent-agno:latest"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    // Check model credentials configured
+    let api_key_configured = {
+        let env_vars = load_user_env(&data);
+        let has_value = |key: &str| {
+            env_vars
+                .iter()
+                .any(|(k, v)| k == key && !v.trim().is_empty())
+        };
+
+        has_value("ANTHROPIC_API_KEY")
+            || (has_value("AGNO_API_KEY")
+                && has_value("AGNO_MODEL_ID")
+                && has_value("AGNO_BASE_URL"))
+    };
+
+    // Also check if container-agno exists in bundle dir (for image building)
+    let _container_dir_exists = bundle.join("container-agno").exists();
+
+    SetupStatus {
+        node_installed,
+        node_version,
+        docker_running,
+        container_image_built,
+        api_key_configured,
+        user_data_dir: data.to_string_lossy().to_string(),
+    }
+}
+
+#[tauri::command]
+fn save_env_config(app: AppHandle, entries: Vec<(String, String)>) -> Result<(), String> {
+    let data = user_data_dir(&app);
+    let env_path = data.join(".env");
+
+    // Read existing .env content, preserving entries not being overwritten
+    let mut existing: Vec<(String, String)> = Vec::new();
+    if let Ok(content) = std::fs::read_to_string(&env_path) {
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            if let Some(eq_pos) = trimmed.find('=') {
+                let key = trimmed[..eq_pos].trim().to_string();
+                let val = trimmed[eq_pos + 1..].trim().to_string();
+                existing.push((key, val));
+            }
+        }
+    }
+
+    // Merge: new entries override existing
+    let new_keys: Vec<&str> = entries.iter().map(|(k, _)| k.as_str()).collect();
+    let mut merged: Vec<(String, String)> = existing
+        .into_iter()
+        .filter(|(k, _)| !new_keys.contains(&k.as_str()))
+        .collect();
+    for (k, v) in entries {
+        if !v.is_empty() {
+            merged.push((k, v));
+        }
+    }
+
+    let content: String = merged
+        .iter()
+        .map(|(k, v)| format!("{}={}", k, v))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+
+    std::fs::write(&env_path, content).map_err(|e| format!("Failed to write .env: {}", e))
+}
+
+#[tauri::command]
+async fn build_container_image(app: AppHandle) -> Result<String, String> {
+    let bundle = bundle_dir(&app);
+    let container_dir = bundle.join("container-agno");
+
+    if !container_dir.exists() {
+        return Err(format!(
+            "Container directory not found: {}",
+            container_dir.display()
+        ));
+    }
+
+    let output = Command::new("docker")
+        .args([
+            "build",
+            "-t",
+            "nanoclaw-agent-agno:latest",
+            ".",
+        ])
+        .current_dir(&container_dir)
+        .output()
+        .map_err(|e| format!("Failed to run docker build: {}", e))?;
+
+    if output.status.success() {
+        Ok("Container image built successfully".to_string())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("Docker build failed: {}", stderr))
+    }
 }
 
 pub fn run() {
@@ -396,9 +715,24 @@ pub fn run() {
             get_backend_status,
             get_backend_config,
             restart_backend,
-            get_project_dir,
+            get_dirs,
+            check_setup,
+            save_env_config,
+            build_container_image,
         ])
         .setup(move |app| {
+            // Fix PATH for macOS GUI apps so node/docker are found
+            fix_path_env();
+
+            // Create user data directories on startup
+            let data = user_data_dir(&app.handle());
+            for subdir in ["store", "data", "groups"] {
+                let dir = data.join(subdir);
+                if !dir.exists() {
+                    let _ = std::fs::create_dir_all(&dir);
+                }
+            }
+
             // Hide from Dock — app lives in menu bar only
             #[cfg(target_os = "macos")]
             {
@@ -453,7 +787,7 @@ pub fn run() {
                         let state = Arc::clone(&tray_state);
                         let app = app.clone();
                         std::thread::spawn(move || {
-                            kill_backend(&state);
+                            kill_backend(&app, &state);
                             wait_for_backend_exit(&state, Duration::from_secs(5));
                             spawn_backend(&app, &state);
                         });
@@ -479,9 +813,9 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(move |_app, event| {
+        .run(move |app, event| {
             if let RunEvent::ExitRequested { .. } = event {
-                kill_backend(&state_for_exit);
+                kill_backend(app, &state_for_exit);
             }
         });
 }

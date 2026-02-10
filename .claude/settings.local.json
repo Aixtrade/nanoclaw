@@ -17,7 +17,12 @@
       "Bash(cargo check:*)",
       "Bash(npm run build:*)",
       "Bash(cargo build:*)",
-      "Bash(export PATH=\"$HOME/.cargo/bin:$PATH\")"
+      "Bash(export PATH=\"$HOME/.cargo/bin:$PATH\")",
+      "Bash(chmod:*)",
+      "Bash(. \"$HOME/.cargo/env\")",
+      "Bash(rustc:*)",
+      "Bash(node --version:*)",
+      "Bash($SHELL -l -c 'node --version && which node')"
     ]
   }
 }

@@ -10,9 +10,15 @@ export const MAX_REQUEST_BODY_BYTES = parseInt(
 );
 export const SCHEDULER_POLL_INTERVAL = 60000;
 
-// Absolute paths needed for container mounts
-const PROJECT_ROOT = process.cwd();
+// In packaged builds, Rust sets these env vars to split bundled resources from mutable data.
+// In dev mode both are unset → process.cwd() for both → identical to previous behavior.
+const BUNDLE_DIR = process.env.NANOCLAW_BUNDLE_DIR || process.cwd();
+const USER_DATA_DIR = process.env.NANOCLAW_DATA_DIR || process.cwd();
+
 const HOME_DIR = process.env.HOME || '/Users/user';
+
+// Bundled resources (read-only in packaged app)
+export const BUNDLE_ROOT = BUNDLE_DIR;
 
 // Mount security: allowlist stored OUTSIDE project root, never mounted into containers
 export const MOUNT_ALLOWLIST_PATH = path.join(
@@ -21,9 +27,11 @@ export const MOUNT_ALLOWLIST_PATH = path.join(
   'nanoclaw',
   'mount-allowlist.json',
 );
-export const STORE_DIR = path.resolve(PROJECT_ROOT, 'store');
-export const GROUPS_DIR = path.resolve(PROJECT_ROOT, 'groups');
-export const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
+
+// Mutable user data
+export const STORE_DIR = path.resolve(USER_DATA_DIR, 'store');
+export const GROUPS_DIR = path.resolve(USER_DATA_DIR, 'groups');
+export const DATA_DIR = path.resolve(USER_DATA_DIR, 'data');
 export const MAIN_GROUP_FOLDER = 'main';
 
 export const CONTAINER_IMAGE =

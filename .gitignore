@@ -35,3 +35,4 @@ agents-sdk-docs
 desktop/node_modules/
 desktop/dist/
 desktop/src-tauri/target/
+prod_node_modules/

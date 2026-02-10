@@ -12,7 +12,7 @@
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
     "desktop:dev": ". \"$HOME/.cargo/env\" && cd desktop && npm run tauri dev",
-    "desktop:build": ". \"$HOME/.cargo/env\" && npm run build && cd desktop && npm run tauri build"
+    "desktop:build": ". \"$HOME/.cargo/env\" && npm run build && bash scripts/stage-prod-deps.sh && cd desktop && npm run tauri build"
   },
   "dependencies": {
     "better-sqlite3": "^11.8.1",

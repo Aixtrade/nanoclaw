@@ -8,6 +8,7 @@ import os from 'os';
 import path from 'path';
 
 import {
+  BUNDLE_ROOT,
   CONTAINER_IMAGE,
   CONTAINER_MAX_OUTPUT_SIZE,
   CONTAINER_TIMEOUT,
@@ -60,12 +61,13 @@ function buildVolumeMounts(
 ): VolumeMount[] {
   const mounts: VolumeMount[] = [];
   const homeDir = getHomeDir();
-  const projectRoot = process.cwd();
+  const dataRoot = process.cwd(); // In packaged builds, Rust sets cwd to user data dir
+  const bundleRoot = BUNDLE_ROOT;
 
   if (isMain) {
-    // Main gets the entire project root mounted
+    // Main gets the user data root mounted
     mounts.push({
-      hostPath: projectRoot,
+      hostPath: dataRoot,
       containerPath: '/workspace/project',
       readonly: false,
     });
@@ -113,7 +115,7 @@ function buildVolumeMounts(
   }
 
   // Sync skills from container{-agno}/skills/ into each group's .claude/skills/
-  const skillsSrc = path.join(process.cwd(),
+  const skillsSrc = path.join(bundleRoot,
     CONTAINER_IMAGE.includes('agno') ? 'container-agno' : 'container', 'skills');
   const skillsDst = path.join(groupSessionsDir, 'skills');
   if (fs.existsSync(skillsSrc)) {
@@ -151,7 +153,7 @@ function buildVolumeMounts(
   // Only expose specific auth variables needed by Claude Code, not the entire .env
   const envDir = path.join(DATA_DIR, 'env');
   fs.mkdirSync(envDir, { recursive: true });
-  const envFile = path.join(projectRoot, '.env');
+  const envFile = path.join(dataRoot, '.env');
   if (fs.existsSync(envFile)) {
     const envContent = fs.readFileSync(envFile, 'utf-8');
     const allowedVars = [
@@ -181,7 +183,7 @@ function buildVolumeMounts(
   // Mount agent-runner source from host — recompiled on container startup.
   // Bypasses Apple Container's sticky build cache for code changes.
   const isAgno = CONTAINER_IMAGE.includes('agno');
-  const agentRunnerSrc = path.join(projectRoot,
+  const agentRunnerSrc = path.join(bundleRoot,
     isAgno ? 'container-agno' : 'container', 'agent-runner', 'src');
   mounts.push({
     hostPath: agentRunnerSrc,
