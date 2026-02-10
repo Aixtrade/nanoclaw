@@ -1,5 +1,5 @@
 {
-  "$schema": "https://raw.githubusercontent.com/nicegui/nicegui/refs/heads/main/tauri.conf.schema.json",
+  "$schema": "https://schema.tauri.app/config/2",
   "productName": "NanoClaw",
   "version": "1.0.0",
   "identifier": "com.nanoclaw.desktop",
@@ -16,25 +16,19 @@
         "title": "NanoClaw",
         "width": 900,
         "height": 650,
-        "visible": false,
+        "visible": true,
         "decorations": true,
         "resizable": true
       }
     ],
     "security": {
       "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:3000 http://localhost:3000; style-src 'self' 'unsafe-inline'"
-    },
-    "trayIcon": {
-      "iconPath": "icons/icon.png",
-      "iconAsTemplate": true
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": [
-      "icons/icon.png"
-    ],
+    "icon": ["icons/icon.png"],
     "macOS": {
       "minimumSystemVersion": "13.0"
     }

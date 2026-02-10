@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import { getGroups, createGroup, type Group } from "./api";
 
   interface Props {
@@ -12,6 +13,15 @@
   let { groups, activeGroup, backendReady, onSelectGroup, onGroupsChanged }: Props = $props();
   let creating = $state(false);
   let newName = $state("");
+  let newGroupInput = $state<HTMLInputElement | null>(null);
+
+  $effect(() => {
+    if (!creating) return;
+    tick().then(() => {
+      newGroupInput?.focus();
+      newGroupInput?.select();
+    });
+  });
 
   export async function refresh() {
     if (!backendReady) return;
@@ -31,8 +41,8 @@
       newName = "";
       creating = false;
       await refresh();
-    } catch (e: any) {
-      alert(e.message);
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : "Failed to create group");
     }
   }
 
@@ -59,11 +69,11 @@
   {#if creating}
     <div class="create-form">
       <input
+        bind:this={newGroupInput}
         type="text"
         bind:value={newName}
         onkeydown={handleKeydown}
         placeholder="Group name..."
-        autofocus
       />
     </div>
   {/if}

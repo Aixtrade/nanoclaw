@@ -7,7 +7,13 @@
   import Chat from "./lib/Chat.svelte";
   import Input from "./lib/Input.svelte";
   import StatusBar from "./lib/StatusBar.svelte";
-  import { streamChat, getGroups, checkHealth, type Group } from "./lib/api";
+  import {
+    streamChat,
+    getGroups,
+    checkHealth,
+    configureApi,
+    type Group,
+  } from "./lib/api";
 
   interface Message {
     role: "user" | "agent";
@@ -26,45 +32,83 @@
   let messages = $derived(messageStore[activeGroup] ?? []);
 
   let status = $derived<"running" | "starting" | "stopped">(
-    backendReady ? "running" : streaming ? "starting" : "starting"
+    backendReady ? "running" : streaming ? "starting" : "stopped"
   );
 
   let sidebar: Sidebar;
 
-  onMount(async () => {
-    // Listen for backend lifecycle events from Rust
-    listen("backend-ready", () => {
-      backendReady = true;
-      loadGroups();
-    });
+  onMount(() => {
+    let disposed = false;
+    let healthCheck: ReturnType<typeof setInterval> | null = null;
+    let unlistenReady: (() => void) | null = null;
+    let unlistenStopped: (() => void) | null = null;
 
-    listen("backend-stopped", () => {
-      backendReady = false;
-    });
+    const init = async () => {
+      try {
+        const config = await invoke<{ baseUrl: string; authToken: string | null }>(
+          "get_backend_config"
+        );
+        configureApi(config);
+      } catch {
+        // fallback to default API base in api.ts
+      }
 
-    // Check initial status
-    try {
-      backendReady = await invoke<boolean>("get_backend_status");
-    } catch {
-      backendReady = false;
-    }
-
-    if (backendReady) {
-      loadGroups();
-    }
-
-    // Also poll health to catch backend that started before we listened
-    const healthCheck = setInterval(async () => {
-      if (!backendReady) {
-        const healthy = await checkHealth();
-        if (healthy) {
+      try {
+        unlistenReady = await listen("backend-ready", () => {
           backendReady = true;
           loadGroups();
-        }
-      }
-    }, 2000);
+        });
 
-    return () => clearInterval(healthCheck);
+        unlistenStopped = await listen("backend-stopped", () => {
+          backendReady = false;
+        });
+
+        if (disposed) {
+          unlistenReady();
+          unlistenStopped();
+          return;
+        }
+      } catch {
+        // event bridge unavailable; health polling still covers readiness
+      }
+
+      // Check initial status
+      try {
+        backendReady = await invoke<boolean>("get_backend_status");
+      } catch {
+        backendReady = false;
+      }
+
+      if (backendReady) {
+        loadGroups();
+      }
+
+      // Also poll health to catch backend that started before event listeners attached
+      healthCheck = setInterval(async () => {
+        if (!backendReady) {
+          const healthy = await checkHealth();
+          if (healthy) {
+            backendReady = true;
+            loadGroups();
+          }
+        }
+      }, 2000);
+    };
+
+    init();
+
+    return () => {
+      disposed = true;
+      if (healthCheck) {
+        clearInterval(healthCheck);
+      }
+      if (unlistenReady) {
+        unlistenReady();
+      }
+      if (unlistenStopped) {
+        unlistenStopped();
+      }
+    };
   });
 
   async function loadGroups() {
@@ -81,10 +125,11 @@
 
   async function handleSend(text: string) {
     if (streaming || !backendReady) return;
+    const groupId = activeGroup;
 
     // Add user message
-    if (!messageStore[activeGroup]) messageStore[activeGroup] = [];
-    messageStore[activeGroup] = [...messageStore[activeGroup], { role: "user", text }];
+    if (!messageStore[groupId]) messageStore[groupId] = [];
+    messageStore[groupId] = [...messageStore[groupId], { role: "user", text }];
     // Trigger reactivity
     messageStore = { ...messageStore };
 
@@ -92,20 +137,20 @@
     streamText = "";
 
     try {
-      for await (const event of streamChat(text, activeGroup)) {
+      for await (const event of streamChat(text, groupId)) {
         if (event.type === "message" && event.data.text) {
           streamText += event.data.text;
         } else if (event.type === "error") {
           // Show error as agent message
           const errorText = event.data.error || "An error occurred";
           if (streamText) {
-            messageStore[activeGroup] = [
-              ...messageStore[activeGroup],
+            messageStore[groupId] = [
+              ...messageStore[groupId],
               { role: "agent", text: streamText },
             ];
           }
-          messageStore[activeGroup] = [
-            ...messageStore[activeGroup],
+          messageStore[groupId] = [
+            ...messageStore[groupId],
             { role: "agent", text: `Error: ${errorText}` },
           ];
           messageStore = { ...messageStore };
@@ -115,10 +160,10 @@
           break;
         }
       }
-    } catch (e: any) {
-      const errorText = e.message || "Connection failed";
-      messageStore[activeGroup] = [
-        ...(messageStore[activeGroup] ?? []),
+    } catch (e: unknown) {
+      const errorText = e instanceof Error ? e.message : "Connection failed";
+      messageStore[groupId] = [
+        ...(messageStore[groupId] ?? []),
         { role: "agent", text: `Error: ${errorText}` },
       ];
       messageStore = { ...messageStore };
@@ -126,8 +171,8 @@
 
     // Commit streamed text as a complete message
     if (streamText) {
-      messageStore[activeGroup] = [
-        ...messageStore[activeGroup],
+      messageStore[groupId] = [
+        ...messageStore[groupId],
         { role: "agent", text: streamText },
       ];
       messageStore = { ...messageStore };

@@ -10,7 +10,7 @@
   async function restart() {
     try {
       await invoke("restart_backend");
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error("Failed to restart:", e);
     }
   }
