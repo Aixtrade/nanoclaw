@@ -8,9 +8,14 @@ use std::time::{Duration, Instant};
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use serde::Serialize;
+#[cfg(target_os = "macos")]
+use tauri::include_image;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
+
+#[cfg(target_os = "macos")]
+const TRAY_TEMPLATE_ICON: tauri::image::Image<'_> = include_image!("./icons/trayTemplate.png");
 
 struct BackendState {
     child: Option<Child>,
@@ -769,10 +774,22 @@ pub fn run() {
 
             let app_handle = app.handle().clone();
             let tray_state = Arc::clone(&state_for_setup);
-            let tray_builder = if let Some(icon) = app.default_window_icon() {
-                TrayIconBuilder::new().icon(icon.clone())
-            } else {
-                TrayIconBuilder::new()
+            let tray_builder = {
+                #[cfg(target_os = "macos")]
+                {
+                    TrayIconBuilder::new()
+                        .icon(TRAY_TEMPLATE_ICON)
+                        .icon_as_template(true)
+                }
+
+                #[cfg(not(target_os = "macos"))]
+                {
+                    if let Some(icon) = app.default_window_icon() {
+                        TrayIconBuilder::new().icon(icon.clone())
+                    } else {
+                        TrayIconBuilder::new()
+                    }
+                }
             };
 
             tray_builder
