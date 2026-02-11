@@ -7,8 +7,8 @@
   import Chat from "./lib/Chat.svelte";
   import Input from "./lib/Input.svelte";
   import Setup from "./lib/Setup.svelte";
+  import Avatar from "./lib/Avatar.svelte";
   import { streamChat, checkHealth, configureApi } from "./lib/api";
-  import logo from "./assets/logo.png";
 
   interface SetupStatus {
     nodeInstalled: boolean;
@@ -36,6 +36,16 @@
 
   let status = $derived<"running" | "starting" | "stopped">(
     backendReady ? "running" : backendStarting ? "starting" : "stopped"
+  );
+
+  let justFinished = $state(false);
+  let finishedTimer: ReturnType<typeof setTimeout> | null = null;
+
+  let chatState = $derived<'idle' | 'thinking' | 'streaming' | 'done'>(
+    justFinished ? 'done' :
+    streaming && streamText ? 'streaming' :
+    streaming ? 'thinking' :
+    'idle'
   );
 
   let disposed = false;
@@ -145,6 +155,9 @@
       if (healthCheck) {
         clearInterval(healthCheck);
       }
+      if (finishedTimer) {
+        clearTimeout(finishedTimer);
+      }
       if (unlistenReady) {
         unlistenReady();
       }
@@ -195,6 +208,12 @@
 
     streaming = false;
     streamText = "";
+
+    // Trigger "done" animation for 1.5s
+    justFinished = true;
+    if (finishedTimer) clearTimeout(finishedTimer);
+    finishedTimer = setTimeout(() => { justFinished = false; }, 1500);
+
     await tick();
     inputRef?.focus();
     requestAnimationFrame(() => {
@@ -241,13 +260,7 @@
 
     <div class="header">
       <button class="logo-btn" onclick={restartBackend} title="Restart backend">
-        <img src={logo} alt="NanoClaw" class="logo" />
-        <span
-          class="status-dot"
-          class:green={status === "running"}
-          class:yellow={status === "starting"}
-          class:red={status === "stopped"}
-        ></span>
+        <Avatar state={chatState} backendStatus={status} />
       </button>
     </div>
 
@@ -288,8 +301,8 @@
 
   .logo-btn {
     position: relative;
-    width: 48px;
-    height: 48px;
+    width: 64px;
+    height: 64px;
     padding: 0;
     display: flex;
     align-items: center;
@@ -299,42 +312,6 @@
 
   .logo-btn:hover {
     background: rgba(255, 255, 255, 0.06);
-  }
-
-  .logo {
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    display: block;
-  }
-
-  .status-dot {
-    position: absolute;
-    bottom: 0;
-    right: 0;
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    border: 2px solid var(--bg);
-  }
-
-  .status-dot.green {
-    background: var(--green);
-    box-shadow: 0 0 4px var(--green);
-  }
-
-  .status-dot.yellow {
-    background: var(--yellow);
-    animation: pulse 1.5s ease-in-out infinite;
-  }
-
-  .status-dot.red {
-    background: var(--red);
-  }
-
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
   }
 
   .content {
