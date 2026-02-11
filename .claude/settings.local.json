@@ -22,7 +22,8 @@
       "Bash(. \"$HOME/.cargo/env\")",
       "Bash(rustc:*)",
       "Bash(node --version:*)",
-      "Bash($SHELL -l -c 'node --version && which node')"
+      "Bash($SHELL -l -c 'node --version && which node')",
+      "Bash(npx svelte-check:*)"
     ]
   }
 }

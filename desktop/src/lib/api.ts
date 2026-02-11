@@ -21,37 +21,9 @@ function buildHeaders(extra?: Record<string, string>): Record<string, string> {
   return headers;
 }
 
-export interface Group {
-  id: string;
-  name: string;
-  folder: string;
-  added_at: string;
-}
-
 export interface ChatEvent {
   type: 'message' | 'error' | 'done';
   data: { text?: string; error?: string; sessionId?: string | null };
-}
-
-export async function getGroups(): Promise<Group[]> {
-  const res = await fetch(`${apiBase}/api/groups`, {
-    headers: buildHeaders(),
-  });
-  if (!res.ok) throw new Error(`Failed to fetch groups: ${res.status}`);
-  return res.json();
-}
-
-export async function createGroup(name: string): Promise<Group> {
-  const res = await fetch(`${apiBase}/api/groups`, {
-    method: 'POST',
-    headers: buildHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ name, folder: name }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `Failed to create group: ${res.status}`);
-  }
-  return res.json();
 }
 
 export async function* streamChat(

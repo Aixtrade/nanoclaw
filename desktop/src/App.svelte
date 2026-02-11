@@ -4,23 +4,11 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { onMount } from "svelte";
 
-  import Sidebar from "./lib/Sidebar.svelte";
   import Chat from "./lib/Chat.svelte";
   import Input from "./lib/Input.svelte";
-  import StatusBar from "./lib/StatusBar.svelte";
   import Setup from "./lib/Setup.svelte";
-  import {
-    streamChat,
-    getGroups,
-    checkHealth,
-    configureApi,
-    type Group,
-  } from "./lib/api";
-
-  interface Message {
-    role: "user" | "agent";
-    text: string;
-  }
+  import { streamChat, checkHealth, configureApi } from "./lib/api";
+  import logo from "./assets/logo.png";
 
   interface SetupStatus {
     nodeInstalled: boolean;
@@ -32,22 +20,20 @@
     userDataDir: string;
   }
 
+  const groupId = "main";
+
   let setupComplete = $state(false);
   let checkingSetup = $state(true);
 
-  let groups = $state<Group[]>([]);
-  let activeGroup = $state("main");
   let backendReady = $state(false);
   let streaming = $state(false);
   let streamText = $state("");
-
-  // Per-group message history (in memory)
-  let messageStore = $state<Record<string, Message[]>>({});
-
-  let messages = $derived(messageStore[activeGroup] ?? []);
+  let userText = $state("");
+  let agentText = $state("");
+  let inputRef: ReturnType<typeof Input>;
 
   let status = $derived<"running" | "starting" | "stopped">(
-    backendReady ? "running" : streaming ? "starting" : "stopped"
+    backendReady ? "running" : "stopped"
   );
 
   let disposed = false;
@@ -78,7 +64,6 @@
     try {
       unlistenReady = await listen("backend-ready", () => {
         backendReady = true;
-        loadGroups();
       });
 
       unlistenStopped = await listen("backend-stopped", () => {
@@ -94,24 +79,17 @@
       // event bridge unavailable; health polling still covers readiness
     }
 
-    // Check initial status
     try {
       backendReady = await invoke<boolean>("get_backend_status");
     } catch {
       backendReady = false;
     }
 
-    if (backendReady) {
-      loadGroups();
-    }
-
-    // Also poll health to catch backend that started before event listeners attached
     healthCheck = setInterval(async () => {
       if (!backendReady) {
         const healthy = await checkHealth();
         if (healthy) {
           backendReady = true;
-          loadGroups();
         }
       }
     }, 2000);
@@ -130,7 +108,6 @@
         init();
       }
     }).catch(() => {
-      // If check_setup fails (e.g. dev mode without command), skip setup gate
       setupComplete = true;
       checkingSetup = false;
       init();
@@ -150,28 +127,12 @@
     };
   });
 
-  async function loadGroups() {
-    try {
-      groups = await getGroups();
-      // If active group doesn't exist in list, default to first or "main"
-      if (groups.length > 0 && !groups.find(g => g.id === activeGroup)) {
-        activeGroup = groups[0].id;
-      }
-    } catch {
-      // backend may still be starting
-    }
-  }
-
   async function handleSend(text: string) {
     if (streaming || !backendReady) return;
-    const groupId = activeGroup;
 
-    // Add user message
-    if (!messageStore[groupId]) messageStore[groupId] = [];
-    messageStore[groupId] = [...messageStore[groupId], { role: "user", text }];
-    // Trigger reactivity
-    messageStore = { ...messageStore };
-
+    // Clear previous round, start new one
+    userText = text;
+    agentText = "";
     streaming = true;
     streamText = "";
 
@@ -180,19 +141,12 @@
         if (event.type === "message" && event.data.text) {
           streamText += event.data.text;
         } else if (event.type === "error") {
-          // Show error as agent message
           const errorText = event.data.error || "An error occurred";
           if (streamText) {
-            messageStore[groupId] = [
-              ...messageStore[groupId],
-              { role: "agent", text: streamText },
-            ];
+            agentText = streamText + `\n\nError: ${errorText}`;
+          } else {
+            agentText = `Error: ${errorText}`;
           }
-          messageStore[groupId] = [
-            ...messageStore[groupId],
-            { role: "agent", text: `Error: ${errorText}` },
-          ];
-          messageStore = { ...messageStore };
           streamText = "";
           break;
         } else if (event.type === "done") {
@@ -201,32 +155,24 @@
       }
     } catch (e: unknown) {
       const errorText = e instanceof Error ? e.message : "Connection failed";
-      messageStore[groupId] = [
-        ...(messageStore[groupId] ?? []),
-        { role: "agent", text: `Error: ${errorText}` },
-      ];
-      messageStore = { ...messageStore };
+      agentText = `Error: ${errorText}`;
     }
 
-    // Commit streamed text as a complete message
+    // Commit streamed text as complete
     if (streamText) {
-      messageStore[groupId] = [
-        ...messageStore[groupId],
-        { role: "agent", text: streamText },
-      ];
-      messageStore = { ...messageStore };
+      agentText = streamText;
     }
 
     streaming = false;
     streamText = "";
   }
 
-  function selectGroup(id: string) {
-    activeGroup = id;
-  }
-
-  function handleGroupsChanged(newGroups: Group[]) {
-    groups = newGroups;
+  async function restartBackend() {
+    try {
+      await invoke("restart_backend");
+    } catch (e: unknown) {
+      console.error("Failed to restart:", e);
+    }
   }
 
   function handleDrag(e: MouseEvent) {
@@ -247,23 +193,30 @@
 {:else if !setupComplete}
   <Setup onComplete={handleSetupComplete} />
 {:else}
-  <div class="app">
-    <Sidebar
-      {groups}
-      {activeGroup}
-      {backendReady}
-      onSelectGroup={selectGroup}
-      onGroupsChanged={handleGroupsChanged}
-    />
-    <main class="main">
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="drag-region" onmousedown={handleDrag} ondblclick={handleDragDblClick}></div>
-      <div class="chat-area">
-        <Chat {messages} {streaming} {streamText} />
-        <Input disabled={!backendReady || streaming} onSend={handleSend} />
-      </div>
-      <StatusBar {status} />
-    </main>
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <div class="app" onclick={() => inputRef?.focus()}>
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <div class="drag-region" onmousedown={handleDrag} ondblclick={handleDragDblClick} onclick={() => inputRef?.focus()}></div>
+
+    <div class="header">
+      <button class="logo-btn" onclick={restartBackend} title="Restart backend">
+        <img src={logo} alt="NanoClaw" class="logo" />
+        <span
+          class="status-dot"
+          class:green={status === "running"}
+          class:yellow={status === "starting"}
+          class:red={status === "stopped"}
+        ></span>
+      </button>
+    </div>
+
+    <div class="content">
+      <Chat {userText} {agentText} {streaming} {streamText}>
+        <Input bind:this={inputRef} disabled={!backendReady || streaming} onSend={handleSend} />
+      </Chat>
+    </div>
   </div>
 {/if}
 
@@ -278,22 +231,74 @@
 
   .app {
     display: flex;
+    flex-direction: column;
     height: 100%;
   }
 
-  .main {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-  }
-
   .drag-region {
-    height: 38px;
-    min-height: 38px;
+    height: 40px;
+    min-height: 40px;
+    -webkit-app-region: drag;
   }
 
-  .chat-area {
+  .header {
+    padding: 8px 24px 12px;
+    display: flex;
+    align-items: center;
+  }
+
+  .logo-btn {
+    position: relative;
+    width: 48px;
+    height: 48px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+  }
+
+  .logo-btn:hover {
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .logo {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: block;
+  }
+
+  .status-dot {
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    border: 2px solid var(--bg);
+  }
+
+  .status-dot.green {
+    background: var(--green);
+    box-shadow: 0 0 4px var(--green);
+  }
+
+  .status-dot.yellow {
+    background: var(--yellow);
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+
+  .status-dot.red {
+    background: var(--red);
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  .content {
     flex: 1;
     display: flex;
     flex-direction: column;
