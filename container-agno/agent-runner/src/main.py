@@ -12,10 +12,13 @@ Protocol:
 """
 
 import asyncio
+import inspect
 import json
 import os
 import sys
 import uuid
+
+from collections.abc import AsyncIterator
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
@@ -39,6 +42,8 @@ from .tools import get_ipc_tools, set_context
 
 OUTPUT_START_MARKER = "---NANOCLAW_OUTPUT_START---"
 OUTPUT_END_MARKER = "---NANOCLAW_OUTPUT_END---"
+STREAM_FLUSH_INTERVAL_SEC = 0.08
+STREAM_FLUSH_MIN_CHARS = 120
 
 
 def write_output(status: str, result: str | None, new_session_id: str | None = None, error: str | None = None) -> None:
@@ -91,10 +96,23 @@ def create_agent(
         add_history_to_context=True,
         num_history_runs=10,
         markdown=False,
-        stream=False,
+        stream=True,
     )
 
     return agent
+
+
+def _is_async_iterator(value: object) -> bool:
+    """Return True when a value can be consumed with `async for`."""
+    return isinstance(value, AsyncIterator) or hasattr(value, "__aiter__")
+
+
+def _extract_text_chunk(event: object) -> str | None:
+    """Extract text chunk from a RunOutputEvent-like object."""
+    content = getattr(event, "content", None)
+    if isinstance(content, str) and content:
+        return content
+    return None
 
 
 async def run_agent_loop(agent: Agent, initial_prompt: str, session_id: str) -> None:
@@ -105,13 +123,71 @@ async def run_agent_loop(agent: Agent, initial_prompt: str, session_id: str) -> 
         log(f"Starting query (session: {session_id})...")
 
         try:
-            response = await agent.arun(prompt, session_id=session_id)
-            result_text = response.get_content_as_string() if response else None
-            if result_text == "":
-                result_text = None
-            log(f"Query done. Result: {result_text[:200] if result_text else 'None'}")
-            if result_text is not None:
-                write_output("success", result_text, session_id)
+            run_result = agent.arun(
+                prompt,
+                session_id=session_id,
+                stream=True,
+            )
+            response_or_stream = await run_result if inspect.isawaitable(run_result) else run_result
+
+            if _is_async_iterator(response_or_stream):
+                chunk_buffer: list[str] = []
+                buffered_chars = 0
+                preview = ""
+                stream_chunk_count = 0
+                loop = asyncio.get_running_loop()
+                last_flush_at = loop.time()
+
+                def flush_buffer() -> None:
+                    nonlocal chunk_buffer, buffered_chars, last_flush_at
+                    if not chunk_buffer:
+                        return
+                    chunk_text = "".join(chunk_buffer)
+                    chunk_buffer = []
+                    buffered_chars = 0
+                    last_flush_at = loop.time()
+                    if chunk_text:
+                        write_output("success", chunk_text, session_id)
+
+                async for event in response_or_stream:
+                    text_chunk = _extract_text_chunk(event)
+                    if not text_chunk:
+                        continue
+
+                    stream_chunk_count += 1
+                    if len(preview) < 200:
+                        preview += text_chunk[: 200 - len(preview)]
+
+                    chunk_buffer.append(text_chunk)
+                    buffered_chars += len(text_chunk)
+
+                    now = loop.time()
+                    if (
+                        buffered_chars >= STREAM_FLUSH_MIN_CHARS
+                        or now - last_flush_at >= STREAM_FLUSH_INTERVAL_SEC
+                    ):
+                        flush_buffer()
+
+                flush_buffer()
+                log(
+                    "Query done (streaming). "
+                    f"Chunks: {stream_chunk_count}, "
+                    f"Preview: {preview if preview else 'None'}"
+                )
+            else:
+                response = response_or_stream
+                result_text: str | None = None
+                get_content = getattr(response, "get_content_as_string", None)
+                if callable(get_content):
+                    value = get_content()
+                    if isinstance(value, str):
+                        result_text = value
+                if result_text == "":
+                    result_text = None
+                log(f"Query done. Result: {result_text[:200] if result_text else 'None'}")
+                if result_text is not None:
+                    write_output("success", result_text, session_id)
+
             # End-of-turn marker for host SSE lifecycle.
             # The host closes one-shot SSE requests when it receives a
             # success frame with a null result.
