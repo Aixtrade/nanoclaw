@@ -204,39 +204,58 @@
               <span class="muted">Configured</span>
             {:else}
               <div class="key-form">
-                <select bind:value={provider}>
-                  <option value="anthropic">Anthropic</option>
-                  <option value="agno">Agno / Custom</option>
-                </select>
+                <label class="field">
+                  <span class="field-label">Provider</span>
+                  <select bind:value={provider} aria-label="Model provider">
+                    <option value="anthropic">Anthropic</option>
+                    <option value="agno">Agno / Custom</option>
+                  </select>
+                </label>
                 {#if provider === "anthropic"}
-                  <input
-                    type="password"
-                    bind:value={anthropicKey}
-                    placeholder="ANTHROPIC_API_KEY"
-                    onkeydown={(e) => e.key === "Enter" && handleSaveConfig()}
-                  />
+                  <label class="field">
+                    <span class="field-label">API Key</span>
+                    <input
+                      type="password"
+                      bind:value={anthropicKey}
+                      placeholder="ANTHROPIC_API_KEY"
+                      onkeydown={(e) => e.key === "Enter" && handleSaveConfig()}
+                      aria-label="Anthropic API key"
+                    />
+                  </label>
                 {:else}
-                  <input
-                    type="password"
-                    bind:value={agnoKey}
-                    placeholder="AGNO_API_KEY"
-                    onkeydown={(e) => e.key === "Enter" && handleSaveConfig()}
-                  />
-                  <input
-                    type="text"
-                    bind:value={agnoModelId}
-                    placeholder="AGNO_MODEL_ID"
-                    onkeydown={(e) => e.key === "Enter" && handleSaveConfig()}
-                  />
-                  <input
-                    type="url"
-                    bind:value={agnoBaseUrl}
-                    placeholder="AGNO_BASE_URL"
-                    onkeydown={(e) => e.key === "Enter" && handleSaveConfig()}
-                  />
+                  <label class="field">
+                    <span class="field-label">API Key</span>
+                    <input
+                      type="password"
+                      bind:value={agnoKey}
+                      placeholder="AGNO_API_KEY"
+                      onkeydown={(e) => e.key === "Enter" && handleSaveConfig()}
+                      aria-label="Agno API key"
+                    />
+                  </label>
+                  <label class="field">
+                    <span class="field-label">Model ID</span>
+                    <input
+                      type="text"
+                      bind:value={agnoModelId}
+                      placeholder="AGNO_MODEL_ID"
+                      onkeydown={(e) => e.key === "Enter" && handleSaveConfig()}
+                      aria-label="Agno model ID"
+                    />
+                  </label>
+                  <label class="field">
+                    <span class="field-label">Base URL</span>
+                    <input
+                      type="url"
+                      bind:value={agnoBaseUrl}
+                      placeholder="AGNO_BASE_URL"
+                      onkeydown={(e) => e.key === "Enter" && handleSaveConfig()}
+                      aria-label="Agno base URL"
+                    />
+                  </label>
                 {/if}
                 <button
-                  class="action-btn"
+                  class="action-btn save-btn"
                   onclick={handleSaveConfig}
                   disabled={savingConfig || !canSave}
                 >
@@ -355,16 +374,28 @@
 
   .key-form {
     display: flex;
-    gap: 0.5rem;
-    align-items: center;
-    flex-wrap: wrap;
+    flex-direction: column;
+    gap: 0.6rem;
+    align-items: stretch;
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 0;
+  }
+
+  .field-label {
+    color: var(--text-muted);
+    font-size: 0.78rem;
   }
 
   .key-form select {
     background: var(--bg-input);
     border: 1px solid var(--border);
     border-radius: 4px;
-    padding: 0.35rem 0.5rem;
+    padding: 0.45rem 0.55rem;
     color: var(--text);
     font-size: 0.85rem;
   }
@@ -373,10 +404,15 @@
     background: var(--bg-input);
     border: 1px solid var(--border);
     border-radius: 4px;
-    padding: 0.35rem 0.5rem;
-    flex: 1;
-    min-width: 120px;
+    padding: 0.45rem 0.55rem;
+    width: 100%;
     font-size: 0.85rem;
+  }
+
+  .key-form select:focus,
+  .key-form input:focus {
+    outline: 1px solid color-mix(in srgb, var(--accent) 75%, #fff 25%);
+    outline-offset: 0;
   }
 
   .action-btn {
@@ -388,6 +424,11 @@
     color: var(--text);
     cursor: pointer;
     white-space: nowrap;
+  }
+
+  .save-btn {
+    align-self: flex-start;
+    margin-top: 0.15rem;
   }
 
   .action-btn:hover:not(:disabled) {

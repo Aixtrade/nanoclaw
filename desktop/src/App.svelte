@@ -2,7 +2,7 @@
   import { listen } from "@tauri-apps/api/event";
   import { invoke } from "@tauri-apps/api/core";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
 
   import Chat from "./lib/Chat.svelte";
   import Input from "./lib/Input.svelte";
@@ -26,20 +26,38 @@
   let checkingSetup = $state(true);
 
   let backendReady = $state(false);
+  let backendStarting = $state(true);
   let streaming = $state(false);
   let streamText = $state("");
   let userText = $state("");
   let agentText = $state("");
-  let inputRef: ReturnType<typeof Input>;
+  let inputRef = $state<ReturnType<typeof Input> | undefined>(undefined);
+  let failedHealthChecks = 0;
 
   let status = $derived<"running" | "starting" | "stopped">(
-    backendReady ? "running" : "stopped"
+    backendReady ? "running" : backendStarting ? "starting" : "stopped"
   );
 
   let disposed = false;
   let healthCheck: ReturnType<typeof setInterval> | null = null;
   let unlistenReady: (() => void) | null = null;
   let unlistenStopped: (() => void) | null = null;
+
+  async function probeHealth() {
+    const healthy = await checkHealth();
+    if (healthy) {
+      backendReady = true;
+      backendStarting = false;
+      failedHealthChecks = 0;
+      return;
+    }
+
+    backendReady = false;
+    failedHealthChecks += 1;
+    if (backendStarting && failedHealthChecks >= 3) {
+      backendStarting = false;
+    }
+  }
 
   function allChecksPass(s: SetupStatus): boolean {
     return (
@@ -52,6 +70,9 @@
   }
 
   async function init() {
+    backendStarting = true;
+    failedHealthChecks = 0;
+
     try {
       const config = await invoke<{ baseUrl: string; authToken: string | null }>(
         "get_backend_config"
@@ -64,10 +85,13 @@
     try {
       unlistenReady = await listen("backend-ready", () => {
         backendReady = true;
+        backendStarting = false;
+        failedHealthChecks = 0;
       });
 
       unlistenStopped = await listen("backend-stopped", () => {
         backendReady = false;
+        backendStarting = false;
       });
 
       if (disposed) {
@@ -81,17 +105,20 @@
 
     try {
       backendReady = await invoke<boolean>("get_backend_status");
+      if (backendReady) {
+        backendStarting = false;
+        failedHealthChecks = 0;
+      }
     } catch {
       backendReady = false;
     }
 
+    if (!backendReady) {
+      await probeHealth();
+    }
+
     healthCheck = setInterval(async () => {
-      if (!backendReady) {
-        const healthy = await checkHealth();
-        if (healthy) {
-          backendReady = true;
-        }
-      }
+      await probeHealth();
     }, 2000);
   }
 
@@ -156,6 +183,9 @@
     } catch (e: unknown) {
       const errorText = e instanceof Error ? e.message : "Connection failed";
       agentText = `Error: ${errorText}`;
+      const healthy = await checkHealth();
+      backendReady = healthy;
+      backendStarting = false;
     }
 
     // Commit streamed text as complete
@@ -165,13 +195,22 @@
 
     streaming = false;
     streamText = "";
+    await tick();
+    inputRef?.focus();
+    requestAnimationFrame(() => {
+      inputRef?.focus();
+    });
   }
 
   async function restartBackend() {
     try {
+      backendReady = false;
+      backendStarting = true;
+      failedHealthChecks = 0;
       await invoke("restart_backend");
     } catch (e: unknown) {
       console.error("Failed to restart:", e);
+      backendStarting = false;
     }
   }
 

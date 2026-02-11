@@ -38,7 +38,7 @@
     </div>
   {:else if streaming}
     <div class="agent-text">
-      <pre><span class="block-cursor"></span></pre>
+      <pre><span class="thinking">思考中...</span> <span class="block-cursor"></span></pre>
     </div>
   {:else if agentText}
     <div class="agent-text">
@@ -67,6 +67,10 @@
 
   .agent-text {
     color: var(--text-agent);
+  }
+
+  .thinking {
+    opacity: 0.9;
   }
 
   pre {

@@ -10,6 +10,8 @@
   let text = $state("");
   let textarea: HTMLTextAreaElement;
   let focused = $state(false);
+  let composing = $state(false);
+  let compositionJustEnded = $state(false);
 
   export function focus() {
     textarea?.focus();
@@ -20,10 +22,19 @@
   });
 
   function handleKeydown(e: KeyboardEvent) {
-    if (e.key === "Enter" && !e.shiftKey) {
+    const isImeEnter = composing || e.isComposing || compositionJustEnded || e.keyCode === 229;
+    if (e.key === "Enter" && !e.shiftKey && !isImeEnter) {
       e.preventDefault();
       send();
     }
+  }
+
+  function handleCompositionEnd() {
+    composing = false;
+    compositionJustEnded = true;
+    setTimeout(() => {
+      compositionJustEnded = false;
+    }, 0);
   }
 
   function send() {
@@ -53,8 +64,11 @@
       onkeydown={handleKeydown}
       onfocus={() => focused = true}
       onblur={() => focused = false}
+      oncompositionstart={() => composing = true}
+      oncompositionend={handleCompositionEnd}
       {disabled}
       rows="1"
+      aria-label="Message input"
     ></textarea>
   </div>
 </div>
