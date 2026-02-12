@@ -1,6 +1,7 @@
 <script lang="ts">
   import { listen } from "@tauri-apps/api/event";
   import { invoke } from "@tauri-apps/api/core";
+  import { getVersion } from "@tauri-apps/api/app";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { onMount, tick } from "svelte";
 
@@ -47,6 +48,8 @@
     streaming ? 'thinking' :
     'idle'
   );
+
+  let appVersion = $state("");
 
   let disposed = false;
   let healthCheck: ReturnType<typeof setInterval> | null = null;
@@ -138,6 +141,8 @@
   }
 
   onMount(() => {
+    getVersion().then((v) => { appVersion = v; }).catch(() => {});
+
     invoke<SetupStatus>("check_setup").then((s) => {
       setupComplete = allChecksPass(s);
       checkingSetup = false;
@@ -262,6 +267,7 @@
       <button class="logo-btn" onclick={restartBackend} title="Restart backend">
         <Avatar state={chatState} backendStatus={status} />
       </button>
+      {#if appVersion}<span class="version">v{appVersion}</span>{/if}
     </div>
 
     <div class="content">
@@ -308,6 +314,14 @@
     align-items: center;
     justify-content: center;
     border-radius: 50%;
+  }
+
+  .version {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--text-muted);
+    opacity: 0.8;
+    user-select: none;
   }
 
   .logo-btn:hover {
