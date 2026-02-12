@@ -23,7 +23,9 @@
       "Bash(rustc:*)",
       "Bash(node --version:*)",
       "Bash($SHELL -l -c 'node --version && which node')",
-      "Bash(npx svelte-check:*)"
+      "Bash(npx svelte-check:*)",
+      "Bash(ls:*)",
+      "Bash(sips:*)"
     ]
   }
 }

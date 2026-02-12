@@ -740,22 +740,9 @@ pub fn run() {
                 }
             }
 
-            // Hide from Dock — app lives in menu bar only
             #[cfg(target_os = "macos")]
             {
-                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-
-                // Accessory policy removes fullscreen capability from windows.
-                // Re-enable it so the green traffic-light button offers fullscreen.
-                if let Some(window) = app.get_webview_window("main") {
-                    use objc2_app_kit::{NSWindow, NSWindowCollectionBehavior};
-                    let ns_ptr = window.ns_window().unwrap();
-                    let ns_win: &NSWindow = unsafe { &*(ns_ptr as *const NSWindow) };
-                    let behavior = ns_win.collectionBehavior();
-                    ns_win.setCollectionBehavior(
-                        behavior | NSWindowCollectionBehavior::FullScreenPrimary,
-                    );
-                }
+                app.set_activation_policy(tauri::ActivationPolicy::Regular);
             }
 
             // Build tray menu
@@ -832,9 +819,16 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(move |app, event| {
-            if let RunEvent::ExitRequested { .. } = event {
+        .run(move |app, event| match event {
+            RunEvent::Reopen { .. } => {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
+            }
+            RunEvent::ExitRequested { .. } => {
                 kill_backend(app, &state_for_exit);
             }
+            _ => {}
         });
 }
