@@ -8,6 +8,7 @@
   import Chat from "./lib/Chat.svelte";
   import Input from "./lib/Input.svelte";
   import Setup from "./lib/Setup.svelte";
+  import Settings from "./lib/Settings.svelte";
   import Avatar from "./lib/Avatar.svelte";
   import { streamChat, checkHealth, configureApi } from "./lib/api";
 
@@ -25,6 +26,7 @@
 
   let setupComplete = $state(false);
   let checkingSetup = $state(true);
+  let showSettings = $state(false);
 
   let backendReady = $state(false);
   let backendStarting = $state(true);
@@ -255,6 +257,8 @@
   </div>
 {:else if !setupComplete}
   <Setup onComplete={handleSetupComplete} />
+{:else if showSettings}
+  <Settings onClose={() => { showSettings = false; backendStarting = true; failedHealthChecks = 0; }} />
 {:else}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -266,6 +270,12 @@
     <div class="header">
       <button class="logo-btn" onclick={restartBackend} title="Restart backend">
         <Avatar state={chatState} backendStatus={status} />
+      </button>
+      <button class="gear-btn" onclick={() => { showSettings = true; }} title="Settings">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+          <circle cx="12" cy="12" r="3"/>
+        </svg>
       </button>
       {#if appVersion}<span class="version">v{appVersion}</span>{/if}
     </div>
@@ -316,8 +326,24 @@
     border-radius: 50%;
   }
 
-  .version {
+  .gear-btn {
     margin-left: auto;
+    padding: 6px;
+    border-radius: 6px;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .gear-btn:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text);
+  }
+
+  .version {
+    margin-left: 8px;
     font-size: 11px;
     color: var(--text-muted);
     opacity: 0.8;

@@ -676,6 +676,12 @@ fn save_env_config(app: AppHandle, entries: Vec<(String, String)>) -> Result<(),
 }
 
 #[tauri::command]
+fn read_env_config(app: AppHandle) -> Vec<(String, String)> {
+    let data = user_data_dir(&app);
+    load_user_env(&data)
+}
+
+#[tauri::command]
 async fn build_container_image(app: AppHandle) -> Result<String, String> {
     let bundle = bundle_dir(&app);
     let container_dir = bundle.join("container-agno");
@@ -725,6 +731,7 @@ pub fn run() {
             get_dirs,
             check_setup,
             save_env_config,
+            read_env_config,
             build_container_image,
         ])
         .setup(move |app| {
