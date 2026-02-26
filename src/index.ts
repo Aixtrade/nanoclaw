@@ -21,6 +21,7 @@ import {
 import {
   AvailableGroup,
   ContainerOutput,
+  initPilotWebhook,
   runContainerAgent,
   writeGroupsSnapshot,
   writeTasksSnapshot,
@@ -899,6 +900,91 @@ async function handleCreateGroup(
   jsonResponse(res, 201, { id: chatJid, name, folder: safeFolder });
 }
 
+async function handlePilotWebhook(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+): Promise<void> {
+  // Only accept from localhost
+  const remoteAddr = req.socket.remoteAddress;
+  if (remoteAddr !== '127.0.0.1' && remoteAddr !== '::1' && remoteAddr !== '::ffff:127.0.0.1') {
+    jsonResponse(res, 403, { error: 'Forbidden' });
+    return;
+  }
+
+  let body: string;
+  try {
+    body = await parseBody(req);
+  } catch (err) {
+    if (err instanceof Error && err.message === 'REQUEST_BODY_TOO_LARGE') {
+      jsonResponse(res, 413, { error: 'Request body too large' });
+      return;
+    }
+    jsonResponse(res, 400, { error: 'Invalid request body' });
+    return;
+  }
+
+  let payload: {
+    event?: string;
+    node_id?: number;
+    timestamp?: string;
+    data?: Record<string, unknown>;
+  };
+  try {
+    payload = JSON.parse(body);
+  } catch {
+    jsonResponse(res, 400, { error: 'Invalid JSON' });
+    return;
+  }
+
+  const event = payload.event;
+  const data = payload.data || {};
+
+  logger.info({ event, nodeId: payload.node_id }, 'Pilot webhook received');
+
+  let prompt: string | null = null;
+
+  if (event === 'message.received' || event === 'data.message') {
+    const peer = data.peer_node_id ?? data.peer ?? 'unknown';
+    const content = data.message ?? data.content ?? '';
+    prompt = `[Pilot Protocol] 收到来自 node ${peer} 的消息: ${content}`;
+  } else if (event === 'data.file') {
+    const peer = data.peer_node_id ?? data.peer ?? 'unknown';
+    prompt = `[Pilot Protocol] 收到来自 node ${peer} 的文件，请运行 pilotctl received 查看`;
+  } else if (event === 'handshake.received') {
+    const peer = data.peer_node_id ?? data.peer ?? 'unknown';
+    const justification = data.justification ?? '';
+    prompt = `[Pilot Protocol] node ${peer} 请求建立信任连接，理由: ${justification}。请决定是否 approve 或 reject`;
+  } else {
+    logger.debug({ event }, 'Pilot webhook event ignored (no handler)');
+  }
+
+  if (prompt) {
+    // Route to main group
+    const chatJid = MAIN_GROUP_FOLDER;
+
+    // Auto-register main group if needed (should already exist)
+    if (!registeredGroups[chatJid]) {
+      registerGroup(chatJid, {
+        name: 'Main',
+        folder: MAIN_GROUP_FOLDER,
+        trigger: `@${ASSISTANT_NAME}`,
+        added_at: new Date().toISOString(),
+        requiresTrigger: false,
+      });
+    }
+
+    // Try piping to active container first, otherwise enqueue
+    if (!queue.sendMessage(chatJid, prompt)) {
+      pendingPrompts.set(chatJid, prompt);
+      queue.enqueueMessageCheck(chatJid);
+    }
+
+    logger.info({ event, chatJid }, 'Pilot webhook routed to main group');
+  }
+
+  jsonResponse(res, 200, { status: 'ok' });
+}
+
 async function handleDeleteSession(
   res: http.ServerResponse,
   folder: string,
@@ -949,6 +1035,12 @@ function startHttpServer(): void {
     }
 
     try {
+      // Pilot webhook: skip auth (localhost-only check is in handler)
+      if (method === 'POST' && pathname === '/api/pilot/webhook') {
+        await handlePilotWebhook(req, res);
+        return;
+      }
+
       if (pathname !== '/api/health' && !isAuthorized(req)) {
         res.writeHead(401, {
           'Content-Type': 'application/json',
@@ -1102,6 +1194,9 @@ async function main(): Promise<void> {
 
   // Start HTTP server
   startHttpServer();
+
+  // Start Pilot Protocol bridge + register webhook (after HTTP server is up)
+  initPilotWebhook();
 
   logger.info(`NanoClaw running (HTTP API on port ${HTTP_PORT})`);
 }

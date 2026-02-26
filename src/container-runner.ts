@@ -14,6 +14,7 @@ import {
   CONTAINER_TIMEOUT,
   DATA_DIR,
   GROUPS_DIR,
+  HTTP_PORT,
 } from './config.js';
 import { logger } from './logger.js';
 import { validateAdditionalMounts } from './mount-security.js';
@@ -59,6 +60,26 @@ function ensurePilotBridge(): boolean {
     logger.warn({ error: err }, 'Failed to start Pilot Protocol bridge (socat not installed?)');
     return false;
   }
+}
+
+/**
+ * Start the Pilot Protocol bridge and register the webhook.
+ * Called once at startup so inbound pilot events are captured immediately.
+ */
+export function initPilotWebhook(): void {
+  if (!ensurePilotBridge()) {
+    logger.debug('Pilot Protocol not available, skipping webhook registration');
+    return;
+  }
+
+  const webhookUrl = `http://localhost:${HTTP_PORT}/api/pilot/webhook`;
+  exec(`pilotctl set-webhook ${webhookUrl}`, (err, _stdout, stderr) => {
+    if (err) {
+      logger.warn({ err, stderr: stderr?.trim() }, 'Failed to register Pilot webhook');
+    } else {
+      logger.info({ webhookUrl }, 'Pilot webhook registered');
+    }
+  });
 }
 
 function getHomeDir(): string {
