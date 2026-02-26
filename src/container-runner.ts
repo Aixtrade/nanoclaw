@@ -1,6 +1,6 @@
 /**
  * Container Runner for NanoClaw
- * Spawns agent execution in Apple Container and handles IPC
+ * Spawns agent execution in Docker containers and handles IPC
  */
 import { ChildProcess, exec, spawn } from 'child_process';
 import fs from 'fs';
@@ -22,6 +22,44 @@ import { RegisteredGroup } from './types.js';
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
+
+// Pilot Protocol: socat bridge from Unix socket to TCP so Docker containers can connect.
+// macOS Docker runs in a Linux VM, so Unix sockets can't cross the VM boundary.
+// Host side: socat TCP-LISTEN → UNIX-CONNECT:/tmp/pilot.sock
+// Container side: socat UNIX-LISTEN:/run/pilot.sock → TCP:host.docker.internal:port
+const PILOT_BRIDGE_PORT = 19191;
+let pilotBridgeProc: ChildProcess | null = null;
+
+function ensurePilotBridge(): boolean {
+  if (pilotBridgeProc && pilotBridgeProc.exitCode === null) return true;
+
+  const homeDir = getHomeDir();
+  const pilotConfigPath = path.join(homeDir, '.pilot', 'config.json');
+  if (!fs.existsSync(pilotConfigPath)) return false;
+
+  let socketPath: string;
+  try {
+    const config = JSON.parse(fs.readFileSync(pilotConfigPath, 'utf-8'));
+    socketPath = config.socket || '/tmp/pilot.sock';
+  } catch {
+    return false;
+  }
+
+  if (!fs.existsSync(socketPath)) return false;
+
+  try {
+    pilotBridgeProc = spawn('socat', [
+      `TCP-LISTEN:${PILOT_BRIDGE_PORT},fork,reuseaddr`,
+      `UNIX-CONNECT:${socketPath}`,
+    ], { stdio: 'ignore', detached: true });
+    pilotBridgeProc.unref();
+    logger.info({ port: PILOT_BRIDGE_PORT, socket: socketPath }, 'Pilot Protocol bridge started');
+    return true;
+  } catch (err) {
+    logger.warn({ error: err }, 'Failed to start Pilot Protocol bridge (socat not installed?)');
+    return false;
+  }
+}
 
 function getHomeDir(): string {
   const home = process.env.HOME || os.homedir();
@@ -114,9 +152,8 @@ function buildVolumeMounts(
     }, null, 2) + '\n');
   }
 
-  // Sync skills from container{-agno}/skills/ into each group's .claude/skills/
-  const skillsSrc = path.join(bundleRoot,
-    CONTAINER_IMAGE.includes('agno') ? 'container-agno' : 'container', 'skills');
+  // Sync skills from container-agno/skills/ into each group's .claude/skills/
+  const skillsSrc = path.join(bundleRoot, 'container-agno', 'skills');
   const skillsDst = path.join(groupSessionsDir, 'skills');
   if (fs.existsSync(skillsSrc)) {
     for (const skillDir of fs.readdirSync(skillsSrc)) {
@@ -160,12 +197,18 @@ function buildVolumeMounts(
       'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY',
       'AGNO_MODEL_ID', 'AGNO_API_KEY', 'AGNO_BASE_URL',
       'AGNO_TEMPERATURE', 'AGNO_MAX_TOKENS',
+      'PILOT_BRIDGE_PORT',
     ];
     const filteredLines = envContent.split('\n').filter((line) => {
       const trimmed = line.trim();
       if (!trimmed || trimmed.startsWith('#')) return false;
       return allowedVars.some((v) => trimmed.startsWith(`${v}=`));
     });
+
+    // Pilot Protocol: start socat bridge and tell container how to connect
+    if (ensurePilotBridge()) {
+      filteredLines.push(`PILOT_BRIDGE_PORT=${PILOT_BRIDGE_PORT}`);
+    }
 
     if (filteredLines.length > 0) {
       fs.writeFileSync(
@@ -180,11 +223,13 @@ function buildVolumeMounts(
     }
   }
 
+  // Pilot Protocol: no socket mount needed — containers connect via
+  // socat TCP bridge (see ensurePilotBridge). The entrypoint creates
+  // a local /tmp/pilot.sock that tunnels to host.docker.internal:PILOT_BRIDGE_PORT.
+
   // Mount agent-runner source from host — recompiled on container startup.
-  // Bypasses Apple Container's sticky build cache for code changes.
-  const isAgno = CONTAINER_IMAGE.includes('agno');
-  const agentRunnerSrc = path.join(bundleRoot,
-    isAgno ? 'container-agno' : 'container', 'agent-runner', 'src');
+  // Bypasses Docker's build cache for code changes.
+  const agentRunnerSrc = path.join(bundleRoot, 'container-agno', 'agent-runner', 'src');
   mounts.push({
     hostPath: agentRunnerSrc,
     containerPath: '/app/src',

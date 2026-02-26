@@ -27,8 +27,8 @@ Guidance for coding agents working in `nanoclaw`.
 ## High-value directories
 
 - `src/`: host runtime (routing, scheduler, DB, container orchestration).
-- `container/agent-runner/`: TS agent runner code that executes inside container image.
-- `container/skills/`: skills copied into each group session.
+- `container-agno/agent-runner/`: Python agent runner code that executes inside container image.
+- `container-agno/skills/`: skills copied into each group session.
 - `groups/`: per-group files and memory (`CLAUDE.md`).
 - `data/`: runtime state (IPC, sessions, env bridge files).
 - `store/messages.db`: SQLite database.
@@ -47,24 +47,11 @@ Run from repository root unless noted.
 - Format: `npm run format`
 - Format check (CI-friendly): `npm run format:check`
 
-### Container image (default runner)
-
-- Build image: `./container/build.sh`
-- Rebuild cleanly when Apple Container cache is sticky:
-  - `container builder stop && container builder rm && container builder start`
-  - `./container/build.sh`
-- Verify image includes latest mounted runner source:
-  - `container run -i --rm --entrypoint wc nanoclaw-agent:latest -l /app/src/index.ts`
-
-### Container runner package (inside `container/agent-runner`)
-
-- Install deps: `npm install`
-- Build TS: `npm run build`
-- Run built runner: `npm run start`
-
-### Optional Agno container
+### Container image (Agno agent)
 
 - Build image: `./container-agno/build.sh`
+- Rebuild without cache: `./container-agno/build.sh --no-cache`
+- Verify image: `docker run --rm --entrypoint wc nanoclaw-agent-agno:latest -l /app/src/index.ts`
 
 ## Lint and test status (important)
 

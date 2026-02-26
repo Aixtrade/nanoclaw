@@ -44,7 +44,7 @@ npx dotenv -e .env -- npx tsx .claude/skills/x-integration/scripts/setup.ts
 # Verify: data/x-auth.json should exist after successful login
 
 # 2. Rebuild container to include skill
-./container/build.sh
+./container-agno/build.sh
 # Verify: Output shows "COPY .claude/skills/x-integration/agent.ts"
 
 # 3. Rebuild host and restart service
@@ -180,7 +180,7 @@ if (!handled) {
 
 ---
 
-**2. Container side: `container/agent-runner/src/ipc-mcp.ts`**
+**2. Container side: `container-agno/agent-runner/src/ipc-mcp.ts`**
 
 Add import after `cron-parser` import:
 ```typescript
@@ -195,21 +195,21 @@ Add to the end of tools array (before the closing `]`):
 
 ---
 
-**3. Build script: `container/build.sh`**
+**3. Build script: `container-agno/build.sh`**
 
-Change build context from `container/` to project root (required to access `.claude/skills/`):
+Change build context from `container-agno/` to project root (required to access `.claude/skills/`):
 ```bash
 # Find:
 container build -t "${IMAGE_NAME}:${TAG}" .
 
 # Replace with:
 cd "$SCRIPT_DIR/.."
-container build -t "${IMAGE_NAME}:${TAG}" -f container/Dockerfile .
+container build -t "${IMAGE_NAME}:${TAG}" -f container-agno/Dockerfile .
 ```
 
 ---
 
-**4. Dockerfile: `container/Dockerfile`**
+**4. Dockerfile: `container-agno/Dockerfile`**
 
 First, update the build context paths (required to access `.claude/skills/` from project root):
 ```dockerfile
@@ -219,12 +219,12 @@ COPY agent-runner/package*.json ./
 COPY agent-runner/ ./
 
 # Replace with:
-COPY container/agent-runner/package*.json ./
+COPY container-agno/agent-runner/package*.json ./
 ...
-COPY container/agent-runner/ ./
+COPY container-agno/agent-runner/ ./
 ```
 
-Then add COPY line after `COPY container/agent-runner/ ./` and before `RUN npm run build`:
+Then add COPY line after `COPY container-agno/agent-runner/ ./` and before `RUN npm run build`:
 ```dockerfile
 # Copy skill MCP tools
 COPY .claude/skills/x-integration/agent.ts ./src/skills/x-integration/
@@ -259,12 +259,12 @@ cat data/x-auth.json  # Should show {"authenticated": true, ...}
 ### 3. Rebuild Container
 
 ```bash
-./container/build.sh
+./container-agno/build.sh
 ```
 
 **Verify success:**
 ```bash
-./container/build.sh 2>&1 | grep -i "agent.ts"  # Should show COPY line
+./container-agno/build.sh 2>&1 | grep -i "agent.ts"  # Should show COPY line
 ```
 
 ### 4. Restart Service
@@ -399,7 +399,7 @@ If MCP tools not found in container:
 
 ```bash
 # Verify build copies skill
-./container/build.sh 2>&1 | grep -i skill
+./container-agno/build.sh 2>&1 | grep -i skill
 
 # Check container has the file
 container run nanoclaw-agent ls -la /app/src/skills/

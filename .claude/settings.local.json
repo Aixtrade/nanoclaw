@@ -26,7 +26,10 @@
       "Bash(npx svelte-check:*)",
       "Bash(ls:*)",
       "Bash(sips:*)",
-      "Bash(export PATH=\"$HOME/.cargo/bin:/opt/homebrew/bin:$PATH\")"
+      "Bash(export PATH=\"$HOME/.cargo/bin:/opt/homebrew/bin:$PATH\")",
+      "WebFetch(domain:pilotprotocol.network)",
+      "Bash(done)",
+      "Bash(sed:*)"
     ]
   }
 }

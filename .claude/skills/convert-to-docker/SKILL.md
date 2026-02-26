@@ -140,7 +140,7 @@ function ensureDockerRunning(): void {
 
 ## 3. Update Build Script
 
-Edit `container/build.sh`:
+Edit `container-agno/build.sh`:
 
 ### 3a. Update build command (around line 15-16)
 
@@ -249,7 +249,7 @@ Verify the build succeeded:
 
 \`\`\`bash
 docker images | grep nanoclaw-agent
-echo '{}' | docker run -i --entrypoint /bin/echo nanoclaw-agent:latest "Container OK" || echo "Container build failed"
+echo '{}' | docker run -i --entrypoint /bin/echo nanoclaw-agent-agno:latest "Container OK" || echo "Container build failed"
 \`\`\`
 ```
 
@@ -281,7 +281,7 @@ After making all changes:
 npm run build
 
 # Build Docker image
-./container/build.sh
+./container-agno/build.sh
 
 # Verify image exists
 docker images | grep nanoclaw-agent
@@ -292,14 +292,14 @@ docker images | grep nanoclaw-agent
 ### 7a. Test basic container execution
 
 ```bash
-echo '{}' | docker run -i --entrypoint /bin/echo nanoclaw-agent:latest "Container OK"
+echo '{}' | docker run -i --entrypoint /bin/echo nanoclaw-agent-agno:latest "Container OK"
 ```
 
 ### 7b. Test readonly mounts
 
 ```bash
 mkdir -p /tmp/test-ro && echo "test" > /tmp/test-ro/file.txt
-docker run --rm --entrypoint /bin/bash -v /tmp/test-ro:/test:ro nanoclaw-agent:latest \
+docker run --rm --entrypoint /bin/bash -v /tmp/test-ro:/test:ro nanoclaw-agent-agno:latest \
   -c "cat /test/file.txt && touch /test/new.txt 2>&1 || echo 'Write blocked (expected)'"
 rm -rf /tmp/test-ro
 ```
@@ -310,7 +310,7 @@ Expected: Read succeeds, write fails with "Read-only file system".
 
 ```bash
 mkdir -p /tmp/test-rw
-docker run --rm --entrypoint /bin/bash -v /tmp/test-rw:/test nanoclaw-agent:latest \
+docker run --rm --entrypoint /bin/bash -v /tmp/test-rw:/test nanoclaw-agent-agno:latest \
   -c "echo 'test write' > /test/new.txt && cat /test/new.txt"
 cat /tmp/test-rw/new.txt && rm -rf /tmp/test-rw
 ```
@@ -342,7 +342,7 @@ sudo usermod -aG docker $USER
 ```bash
 # Clean rebuild
 docker builder prune -af
-./container/build.sh
+./container-agno/build.sh
 ```
 
 **Container can't write to mounted directories:**
@@ -354,7 +354,7 @@ Check directory permissions on the host. The container runs as uid 1000.
 |------|----------------|
 | `src/container-runner.ts` | Mount syntax, spawn command, comments |
 | `src/index.ts` | Startup check function |
-| `container/build.sh` | Build and run commands |
+| `container-agno/build.sh` | Build and run commands |
 | `CLAUDE.md` | Quick context |
 | `README.md` | Requirements, FAQ |
 | `docs/REQUIREMENTS.md` | Architecture references |

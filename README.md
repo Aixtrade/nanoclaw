@@ -3,20 +3,66 @@
 </p>
 
 <p align="center">
-  My personal Claude assistant that runs securely in containers. Lightweight and built to be understood and customized for your own needs.
+  A personal AI assistant that runs securely in Docker containers with peer-to-peer agent networking.
 </p>
 
 <p align="center">
   <a href="https://discord.gg/VGWXrf8x"><img src="https://img.shields.io/discord/1470188214710046894?label=Discord&logo=discord&v=2" alt="Discord"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
 </p>
 
-**New:** First AI assistant to support [Agent Swarms](https://code.claude.com/docs/en/agent-teams). Spin up teams of agents that collaborate in your chat.
+<p align="center">
+  <a href="README.md">English</a> | <a href="README_CN.md">中文</a>
+</p>
 
-## Why I Built This
+---
 
-[OpenClaw](https://github.com/openclaw/openclaw) is an impressive project with a great vision. But I can't sleep well running software I don't understand with access to my life. OpenClaw has 52+ modules, 8 config management files, 45+ dependencies, and abstractions for 15 channel providers. Security is application-level (allowlists, pairing codes) rather than OS isolation. Everything runs in one Node process with shared memory.
+## What is NanoClaw?
 
-NanoClaw gives you the same core functionality in a codebase you can understand in 8 minutes. One process. A handful of files. Agents run in actual Linux containers with filesystem isolation, not behind permission checks.
+NanoClaw is a lightweight, self-hosted AI assistant you can message via WhatsApp. Each conversation group runs in an isolated Docker container with its own filesystem and memory. Agents can communicate with other AI agents across the internet via [Pilot Protocol](https://pilotprotocol.network).
+
+**Key features:**
+
+- **WhatsApp I/O** — Message your AI assistant from your phone
+- **Container isolation** — Each group runs in its own Docker sandbox
+- **Pilot Protocol** — Agents discover and message other agents peer-to-peer
+- **Scheduled tasks** — Recurring jobs that run autonomously
+- **Agent Swarms** — Teams of agents collaborating on complex tasks
+- **Per-group memory** — Isolated `CLAUDE.md` memory per conversation
+- **Extensible via skills** — Add Gmail, Telegram, X/Twitter and more
+
+## Prerequisites
+
+| Dependency | Version | Purpose |
+|------------|---------|---------|
+| [Node.js](https://nodejs.org) | 20+ | Host process runtime |
+| [Docker](https://docker.com/products/docker-desktop) | Latest | Container runtime for agents |
+| [socat](https://linux.die.net/man/1/socat) | Any | Pilot Protocol socket bridge (macOS) |
+| [Pilot Protocol](https://pilotprotocol.network/docs/getting-started) | Latest | Agent-to-agent networking (optional) |
+| [Claude Code](https://claude.ai/download) | Latest | AI-native setup and customization |
+
+### Install dependencies
+
+**macOS (Homebrew):**
+
+```bash
+brew install node socat
+# Docker Desktop: https://docker.com/products/docker-desktop
+```
+
+**Linux (apt):**
+
+```bash
+sudo apt install nodejs npm socat docker.io
+```
+
+**Pilot Protocol (optional):**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/TeoSlayer/pilotprotocol/main/install.sh | sh
+pilotctl init --registry 34.71.57.205:9000 --beacon 34.71.57.205:9001
+pilotctl daemon start --hostname my-agent
+```
 
 ## Quick Start
 
@@ -26,46 +72,148 @@ cd nanoclaw
 claude
 ```
 
-Then run `/setup`. Claude Code handles everything: dependencies, authentication, container setup, service configuration.
+Then run `/setup`. Claude Code handles the rest: dependencies, WhatsApp authentication, container build, and service configuration.
 
-## Philosophy
+## Environment Variables
 
-**Small enough to understand.** One process, a few source files. No microservices, no message queues, no abstraction layers. Have Claude Code walk you through it.
+Create a `.env` file in the project root:
 
-**Secure by isolation.** Agents run in Linux containers (Apple Container on macOS, or Docker). They can only see what's explicitly mounted. Bash access is safe because commands run inside the container, not on your host.
+```bash
+# Authentication (one of these is required)
+ANTHROPIC_API_KEY=sk-ant-api03-...        # Pay-per-use API key
+CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...  # Claude subscription token
 
-**Built for one user.** This isn't a framework. It's working software that fits my exact needs. You fork it and have Claude Code make it match your exact needs.
+# Agno agent model (optional, defaults to Claude)
+AGNO_MODEL_ID=claude-sonnet-4-5-20250514
+AGNO_API_KEY=sk-ant-api03-...
+AGNO_BASE_URL=https://api.anthropic.com
+AGNO_TEMPERATURE=0.7
+AGNO_MAX_TOKENS=4096
 
-**Customization = code changes.** No configuration sprawl. Want different behavior? Modify the code. The codebase is small enough that this is safe.
+# App settings (optional)
+ASSISTANT_NAME=Andy              # Trigger word (default: Andy)
+CONTAINER_TIMEOUT=1800000        # Container timeout in ms (default: 30min)
+MAX_CONCURRENT_CONTAINERS=5      # Parallel container limit
+LOG_LEVEL=info                   # debug | info | warn | error
+```
 
-**AI-native.** No installation wizard; Claude Code guides setup. No monitoring dashboard; ask Claude what's happening. No debugging tools; describe the problem, Claude fixes it.
+> Only auth variables and `AGNO_*` / `PILOT_BRIDGE_PORT` are passed into containers. Other env vars stay on the host.
 
-**Skills over features.** Contributors shouldn't add features (e.g. support for Telegram) to the codebase. Instead, they contribute [claude code skills](https://code.claude.com/docs/en/skills) like `/add-telegram` that transform your fork. You end up with clean code that does exactly what you need.
+## Build
 
-**Best harness, best model.** This runs on Claude Agent SDK, which means you're running Claude Code directly. The harness matters. A bad harness makes even smart models seem dumb, a good harness gives them superpowers. Claude Code is (IMO) the best harness available.
+```bash
+# Install host dependencies
+npm install
 
-## What It Supports
+# Build the host process
+npm run build
 
-- **WhatsApp I/O** - Message Claude from your phone
-- **Isolated group context** - Each group has its own `CLAUDE.md` memory, isolated filesystem, and runs in its own container sandbox with only that filesystem mounted
-- **Main channel** - Your private channel (self-chat) for admin control; every other group is completely isolated
-- **Scheduled tasks** - Recurring jobs that run Claude and can message you back
-- **Web access** - Search and fetch content
-- **Container isolation** - Agents sandboxed in Apple Container (macOS) or Docker (macOS/Linux)
-- **Agent Swarms** - Spin up teams of specialized agents that collaborate on complex tasks (first personal AI assistant to support this)
-- **Optional integrations** - Add Gmail (`/add-gmail`) and more via skills
+# Build the agent container image
+./container-agno/build.sh
+```
+
+Verify the container:
+
+```bash
+docker run --rm --entrypoint pilotctl nanoclaw-agent-agno:latest --json context
+```
+
+## Run
+
+**Development:**
+
+```bash
+npm run dev
+```
+
+**Production (macOS launchd):**
+
+```bash
+# Install as persistent service
+cp launchd/com.nanoclaw.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
+
+# Manage
+launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist  # stop
+launchctl kickstart -k gui/$(id -u)/com.nanoclaw            # restart
+```
+
+**Logs:**
+
+```bash
+tail -f logs/nanoclaw.log          # host logs
+ls groups/*/logs/container-*.log   # per-container logs
+```
+
+## Architecture
+
+```
+WhatsApp ──► Node.js host ──► Docker container (Agno agent)
+               │                    │
+               ├── SQLite DB        ├── /workspace/group (isolated fs)
+               ├── IPC watcher      ├── /workspace/ipc (file-based IPC)
+               ├── Task scheduler   ├── pilotctl (Pilot Protocol CLI)
+               └── socat bridge     └── socat ──► host daemon
+                     │
+                     ▼
+               Pilot Protocol daemon ──► P2P overlay network
+```
+
+**Host process** (`src/index.ts`): Connects to WhatsApp, routes messages to containers, manages IPC and scheduling.
+
+**Agent container** (`container-agno/`): Python + Agno framework. Each group gets its own isolated container with mounted workspace. Includes `pilotctl` for agent-to-agent communication.
+
+**Pilot Protocol bridge**: On macOS, Docker runs in a Linux VM so Unix sockets can't cross the boundary. A `socat` TCP bridge (port 19191) relays between the host daemon socket and containers.
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/index.ts` | WhatsApp connection, message routing, IPC |
+| `src/container-runner.ts` | Container lifecycle, mounts, Pilot bridge |
+| `src/task-scheduler.ts` | Scheduled task execution |
+| `src/db.ts` | SQLite operations |
+| `container-agno/Dockerfile` | Agent image (Python + Agno + pilotctl) |
+| `container-agno/agent-runner/` | Code that runs inside containers |
+| `container-agno/skills/` | Skills synced into each agent session |
+| `groups/*/CLAUDE.md` | Per-group persistent memory |
+
+## Pilot Protocol
+
+[Pilot Protocol](https://pilotprotocol.network) gives your agent a permanent address on a P2P encrypted network. Other agents can discover and message yours.
+
+**Setup on host:**
+
+```bash
+pilotctl daemon start --hostname my-agent
+pilotctl info    # show your address and peers
+```
+
+**Inside containers, agents can:**
+
+```bash
+pilotctl --json info                                    # node status
+pilotctl send-message other-agent --data "hello"        # send message
+pilotctl --json inbox                                   # check inbox
+pilotctl send-file other-agent /workspace/group/report  # send file
+pilotctl ping other-agent                               # test connectivity
+pilotctl handshake other-agent "collaboration request"  # establish trust
+```
+
+The bridge is automatic — when `~/.pilot/config.json` exists on the host, `container-runner.ts` starts a socat bridge and passes `PILOT_BRIDGE_PORT` to containers. The container entrypoint creates a local socket so `pilotctl` works transparently.
 
 ## Usage
 
 Talk to your assistant with the trigger word (default: `@Andy`):
 
 ```
-@Andy send an overview of the sales pipeline every weekday morning at 9am (has access to my Obsidian vault folder)
-@Andy review the git history for the past week each Friday and update the README if there's drift
-@Andy every Monday at 8am, compile news on AI developments from Hacker News and TechCrunch and message me a briefing
+@Andy send an overview of the sales pipeline every weekday morning at 9am
+@Andy review the git history for the past week each Friday
+@Andy message agent-alpha asking for the latest report
 ```
 
-From the main channel (your self-chat), you can manage groups and tasks:
+From the main channel, manage groups and tasks:
+
 ```
 @Andy list all scheduled tasks across groups
 @Andy pause the Monday briefing task
@@ -74,100 +222,65 @@ From the main channel (your self-chat), you can manage groups and tasks:
 
 ## Customizing
 
-There are no configuration files to learn. Just tell Claude Code what you want:
+Tell Claude Code what you want:
 
 - "Change the trigger word to @Bob"
-- "Remember in the future to make responses shorter and more direct"
+- "Make responses shorter and more direct"
 - "Add a custom greeting when I say good morning"
-- "Store conversation summaries weekly"
 
 Or run `/customize` for guided changes.
 
-The codebase is small enough that Claude can safely modify it.
+### Available Skills
+
+| Skill | Purpose |
+|-------|---------|
+| `/setup` | First-time installation and configuration |
+| `/customize` | Add channels, integrations, modify behavior |
+| `/debug` | Container issues, logs, troubleshooting |
+| `/add-telegram` | Add Telegram channel |
+| `/add-gmail` | Gmail integration |
+| `/x-integration` | X/Twitter integration |
 
 ## Contributing
 
 **Don't add features. Add skills.**
 
-If you want to add Telegram support, don't create a PR that adds Telegram alongside WhatsApp. Instead, contribute a skill file (`.claude/skills/add-telegram/SKILL.md`) that teaches Claude Code how to transform a NanoClaw installation to use Telegram.
+Contribute a skill file (`.claude/skills/your-skill/SKILL.md`) that teaches Claude Code how to transform a NanoClaw installation. Users run `/your-skill` and get clean code tailored to their needs.
 
-Users then run `/add-telegram` on their fork and get clean code that does exactly what they need, not a bloated system trying to support every use case.
+See [existing skills](.claude/skills/) for examples.
 
-### RFS (Request for Skills)
+### Request for Skills
 
-Skills we'd love to see:
-
-**Communication Channels**
-- `/add-telegram` - Add Telegram as channel. Should give the user option to replace WhatsApp or add as additional channel. Also should be possible to add it as a control channel (where it can trigger actions) or just a channel that can be used in actions triggered elsewhere
-- `/add-slack` - Add Slack
-- `/add-discord` - Add Discord
-
-**Platform Support**
-- `/setup-windows` - Windows via WSL2 + Docker
-
-**Session Management**
-- `/add-clear` - Add a `/clear` command that compacts the conversation (summarizes context while preserving critical information in the same session). Requires figuring out how to trigger compaction programmatically via the Claude Agent SDK.
-
-## Requirements
-
-- macOS or Linux
-- Node.js 20+
-- [Claude Code](https://claude.ai/download)
-- [Apple Container](https://github.com/apple/container) (macOS) or [Docker](https://docker.com/products/docker-desktop) (macOS/Linux)
-
-## Architecture
-
-```
-WhatsApp (baileys) --> SQLite --> Polling loop --> Container (Claude Agent SDK) --> Response
-```
-
-Single Node.js process. Agents execute in isolated Linux containers with mounted directories. Per-group message queue with concurrency control. IPC via filesystem.
-
-Key files:
-- `src/index.ts` - Main app: WhatsApp connection, message loop, IPC
-- `src/group-queue.ts` - Per-group queue with global concurrency limit
-- `src/container-runner.ts` - Spawns streaming agent containers
-- `src/task-scheduler.ts` - Runs scheduled tasks
-- `src/db.ts` - SQLite operations (messages, groups, sessions, state)
-- `groups/*/CLAUDE.md` - Per-group memory
+- `/add-slack` — Slack channel
+- `/add-discord` — Discord channel
+- `/setup-windows` — Windows via WSL2 + Docker
 
 ## FAQ
 
-**Why WhatsApp and not Telegram/Signal/etc?**
+<details>
+<summary><b>Why WhatsApp?</b></summary>
+Because the author uses WhatsApp. Fork it and run a skill to switch. That's the whole point.
+</details>
 
-Because I use WhatsApp. Fork it and run a skill to change it. That's the whole point.
+<details>
+<summary><b>Can I run this on Linux?</b></summary>
+Yes. Run <code>/setup</code> and Docker is configured automatically.
+</details>
 
-**Why Apple Container instead of Docker?**
+<details>
+<summary><b>Is this secure?</b></summary>
+Agents run in Docker containers with only explicitly mounted directories visible. See <a href="docs/SECURITY.md">docs/SECURITY.md</a> for the full security model.
+</details>
 
-On macOS, Apple Container is lightweight, fast, and optimized for Apple silicon. But Docker is also fully supported—during `/setup`, you can choose which runtime to use. On Linux, Docker is used automatically.
+<details>
+<summary><b>How do I debug issues?</b></summary>
+Run <code>claude</code>, then <code>/debug</code>. Or ask Claude directly: "Why isn't the scheduler running?"
+</details>
 
-**Can I run this on Linux?**
-
-Yes. Run `/setup` and it will automatically configure Docker as the container runtime. Thanks to [@dotsetgreg](https://github.com/dotsetgreg) for contributing the `/convert-to-docker` skill.
-
-**Is this secure?**
-
-Agents run in containers, not behind application-level permission checks. They can only access explicitly mounted directories. You should still review what you're running, but the codebase is small enough that you actually can. See [docs/SECURITY.md](docs/SECURITY.md) for the full security model.
-
-**Why no configuration files?**
-
-We don't want configuration sprawl. Every user should customize it to so that the code matches exactly what they want rather than configuring a generic system. If you like having config files, tell Claude to add them.
-
-**How do I debug issues?**
-
-Ask Claude Code. "Why isn't the scheduler running?" "What's in the recent logs?" "Why did this message not get a response?" That's the AI-native approach.
-
-**Why isn't the setup working for me?**
-
-I don't know. Run `claude`, then run `/debug`. If claude finds an issue that is likely affecting other users, open a PR to modify the setup SKILL.md.
-
-**What changes will be accepted into the codebase?**
-
-Security fixes, bug fixes, and clear improvements to the base configuration. That's it.
-
-Everything else (new capabilities, OS compatibility, hardware support, enhancements) should be contributed as skills.
-
-This keeps the base system minimal and lets every user customize their installation without inheriting features they don't want.
+<details>
+<summary><b>Is Pilot Protocol required?</b></summary>
+No. It's optional. Without it, your agent works normally but can't communicate with other agents on the network.
+</details>
 
 ## Community
 
@@ -175,4 +288,4 @@ Questions? Ideas? [Join the Discord](https://discord.gg/VGWXrf8x).
 
 ## License
 
-MIT
+[MIT](LICENSE)

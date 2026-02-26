@@ -107,7 +107,7 @@ sqlite3 store/messages.db "SELECT name, container_config FROM registered_groups;
 
 # Test-run a container to check mounts (dry run)
 # Replace <group-folder> with the group's folder name
-container run -i --rm --entrypoint ls nanoclaw-agent:latest /workspace/extra/
+docker run --rm --entrypoint ls nanoclaw-agent-agno:latest /workspace/extra/
 ```
 
 ## WhatsApp Auth Issues

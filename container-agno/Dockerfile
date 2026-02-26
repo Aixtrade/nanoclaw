@@ -1,13 +1,22 @@
 # NanoClaw Agno Agent Container
-# Runs Agno-based agent in isolated Linux VM (no browser, MVP)
+# Runs Agno-based agent in Docker container with Pilot Protocol support
 
+# Stage 1: Build pilotctl from source
+FROM golang:1.25-alpine AS pilot-build
+RUN go install github.com/TeoSlayer/pilotprotocol/cmd/pilotctl@latest
+
+# Stage 2: Agent runtime
 FROM python:3.11-slim
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     curl \
     git \
+    socat \
     && rm -rf /var/lib/apt/lists/*
+
+# Copy pilotctl binary from build stage
+COPY --from=pilot-build /go/bin/pilotctl /usr/local/bin/pilotctl
 
 # Install uv for fast dependency management
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv

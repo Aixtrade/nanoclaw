@@ -12,10 +12,10 @@ This guide covers debugging the containerized agent execution system.
 ```
 Host (macOS)                          Container (Linux VM)
 ─────────────────────────────────────────────────────────────
-src/container-runner.ts               container/agent-runner/
+src/container-runner.ts               container-agno/agent-runner/
     │                                      │
-    │ spawns Apple Container               │ runs Claude Agent SDK
-    │ with volume mounts                   │ with MCP servers
+    │ spawns Docker container              │ runs Agno agent
+    │ with volume mounts                   │ with IPC tools
     │                                      │
     ├── data/env/env ──────────────> /workspace/env-dir/env
     ├── groups/{folder} ───────────> /workspace/group
@@ -88,7 +88,7 @@ To verify env vars are reaching the container:
 ```bash
 echo '{}' | container run -i \
   --mount type=bind,source=$(pwd)/data/env,target=/workspace/env-dir,readonly \
-  --entrypoint /bin/bash nanoclaw-agent:latest \
+  --entrypoint /bin/bash nanoclaw-agent-agno:latest \
   -c 'export $(cat /workspace/env-dir/env | xargs); echo "OAuth: ${#CLAUDE_CODE_OAUTH_TOKEN} chars, API: ${#ANTHROPIC_API_KEY} chars"'
 ```
 
@@ -107,7 +107,7 @@ echo '{}' | container run -i \
 
 To check what's mounted inside a container:
 ```bash
-container run --rm --entrypoint /bin/bash nanoclaw-agent:latest -c 'ls -la /workspace/'
+container run --rm --entrypoint /bin/bash nanoclaw-agent-agno:latest -c 'ls -la /workspace/'
 ```
 
 Expected structure:
@@ -129,7 +129,7 @@ Expected structure:
 
 The container runs as user `node` (uid 1000). Check ownership:
 ```bash
-container run --rm --entrypoint /bin/bash nanoclaw-agent:latest -c '
+container run --rm --entrypoint /bin/bash nanoclaw-agent-agno:latest -c '
   whoami
   ls -la /workspace/
   ls -la /app/
@@ -154,7 +154,7 @@ grep -A3 "Claude sessions" src/container-runner.ts
 ```bash
 container run --rm --entrypoint /bin/bash \
   -v ~/.claude:/home/node/.claude \
-  nanoclaw-agent:latest -c '
+  nanoclaw-agent-agno:latest -c '
 echo "HOME=$HOME"
 ls -la $HOME/.claude/projects/ 2>&1 | head -5
 '
@@ -187,14 +187,14 @@ echo '{"prompt":"What is 2+2?","groupFolder":"test","chatJid":"test@g.us","isMai
   --mount "type=bind,source=$(pwd)/data/env,target=/workspace/env-dir,readonly" \
   -v $(pwd)/groups/test:/workspace/group \
   -v $(pwd)/data/ipc:/workspace/ipc \
-  nanoclaw-agent:latest
+  nanoclaw-agent-agno:latest
 ```
 
 ### Test Claude Code directly:
 ```bash
 container run --rm --entrypoint /bin/bash \
   --mount "type=bind,source=$(pwd)/data/env,target=/workspace/env-dir,readonly" \
-  nanoclaw-agent:latest -c '
+  nanoclaw-agent-agno:latest -c '
   export $(cat /workspace/env-dir/env | xargs)
   claude -p "Say hello" --dangerously-skip-permissions --allowedTools ""
 '
@@ -202,7 +202,7 @@ container run --rm --entrypoint /bin/bash \
 
 ### Interactive shell in container:
 ```bash
-container run --rm -it --entrypoint /bin/bash nanoclaw-agent:latest
+container run --rm -it --entrypoint /bin/bash nanoclaw-agent-agno:latest
 ```
 
 ## SDK Options Reference
@@ -232,11 +232,11 @@ query({
 npm run build
 
 # Rebuild container (use --no-cache for clean rebuild)
-./container/build.sh
+./container-agno/build.sh
 
 # Or force full rebuild
 container builder prune -af
-./container/build.sh
+./container-agno/build.sh
 ```
 
 ## Checking Container Image
@@ -246,7 +246,7 @@ container builder prune -af
 container images
 
 # Check what's in the image
-container run --rm --entrypoint /bin/bash nanoclaw-agent:latest -c '
+container run --rm --entrypoint /bin/bash nanoclaw-agent-agno:latest -c '
   echo "=== Node version ==="
   node --version
 
@@ -330,7 +330,7 @@ echo -e "\n3. Apple Container system running?"
 container system status &>/dev/null && echo "OK" || echo "NOT RUNNING - NanoClaw should auto-start it; check logs"
 
 echo -e "\n4. Container image exists?"
-echo '{}' | container run -i --entrypoint /bin/echo nanoclaw-agent:latest "OK" 2>/dev/null || echo "MISSING - run ./container/build.sh"
+echo '{}' | container run -i --entrypoint /bin/echo nanoclaw-agent-agno:latest "OK" 2>/dev/null || echo "MISSING - run ./container-agno/build.sh"
 
 echo -e "\n5. Session mount path correct?"
 grep -q "/home/node/.claude" src/container-runner.ts 2>/dev/null && echo "OK" || echo "WRONG - should mount to /home/node/.claude/, not /root/.claude/"

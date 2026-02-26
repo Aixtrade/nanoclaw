@@ -122,19 +122,15 @@ KEY=$(grep "^ANTHROPIC_API_KEY=" .env | cut -d= -f2)
 Build the NanoClaw agent container:
 
 ```bash
-./container/build.sh
+./container-agno/build.sh
 ```
 
-This creates the `nanoclaw-agent:latest` image with Node.js, Chromium, Claude Code CLI, and agent-browser.
+This creates the `nanoclaw-agent-agno:latest` image with Python, Agno agent runner, and IPC tools.
 
-Verify the build succeeded by running a simple test (this auto-detects which runtime you're using):
+Verify the build succeeded:
 
 ```bash
-if which docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-  echo '{}' | docker run -i --entrypoint /bin/echo nanoclaw-agent:latest "Container OK" || echo "Container build failed"
-else
-  echo '{}' | container run -i --entrypoint /bin/echo nanoclaw-agent:latest "Container OK" || echo "Container build failed"
-fi
+echo '{}' | docker run -i --entrypoint /bin/echo nanoclaw-agent-agno:latest "Container OK" || echo "Container build failed"
 ```
 
 ## 5. WhatsApp Authentication
