@@ -154,6 +154,7 @@ Content-Type: application/json
   "status": "active",
   "success": true,
   "resultSummary": "任务执行完成，已发送日报。",
+  "chatOutput": "NanoClaw: 任务执行完成，已发送日报。",
   "error": null
 }
 ```
@@ -171,6 +172,7 @@ Content-Type: application/json
 | `status` | string | 任务当前状态 |
 | `success` | boolean | 本次执行是否成功 |
 | `resultSummary` | string | 执行结果摘要 |
+| `chatOutput` | string \| null | 实际发送到聊天流的完整内容（包含工具 `send_message` 与 agent 输出，多段消息用换行拼接） |
 | `error` | string \| null | 错误信息，成功时为 null |
 
 ### 注意事项

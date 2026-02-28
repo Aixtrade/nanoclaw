@@ -39,7 +39,12 @@ export interface SchedulerDependencies {
     containerName: string,
     groupFolder: string,
   ) => void;
-  sendMessage: (jid: string, text: string) => Promise<void>;
+  sendMessage: (
+    jid: string,
+    text: string,
+    options?: { dropIfNoListener?: boolean },
+  ) => Promise<void>;
+  beginChatOutputCapture: (jid: string) => () => string[];
   assistantName: string;
 }
 
@@ -55,6 +60,7 @@ interface TaskCompletionWebhookPayload {
   status: ScheduledTask['status'];
   success: boolean;
   resultSummary: string;
+  chatOutput: string | null;
   error: string | null;
 }
 
@@ -158,6 +164,7 @@ async function runTask(
 
   let result: string | null = null;
   let error: string | null = null;
+  const stopCapture = deps.beginChatOutputCapture(task.chat_jid);
 
   // For group context mode, use the group's current session
   const sessions = deps.getSessions();
@@ -203,6 +210,7 @@ async function runTask(
             await deps.sendMessage(
               task.chat_jid,
               `${deps.assistantName}: ${text}`,
+              { dropIfNoListener: true },
             );
           }
           resetIdleTimer();
@@ -243,6 +251,8 @@ async function runTask(
     error = err instanceof Error ? err.message : String(err);
     logger.error({ taskId: task.id, error }, 'Task failed');
   }
+
+  const chatMessages = stopCapture();
 
   // Post-processing: log run, update status, notify webhook.
   // Wrapped in try/catch so a failure here doesn't leave the task stuck at 'running'.
@@ -295,6 +305,7 @@ async function runTask(
   const updatedTask = getTaskById(task.id);
   const finalStatus =
     updatedTask?.status ?? (nextRun === null ? 'completed' : 'active');
+  const chatOutput = chatMessages.length > 0 ? chatMessages.join('\n') : null;
   await notifyTaskCompletion({
     taskId: task.id,
     groupFolder: task.group_folder,
@@ -311,6 +322,7 @@ async function runTask(
       : cleanResult
         ? cleanResult.slice(0, 200)
         : 'Completed',
+    chatOutput,
     error,
   });
 }

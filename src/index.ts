@@ -62,6 +62,7 @@ const messageBuffers = new Map<
   string,
   Array<{ text: string; timestamp: string }>
 >();
+const messageCaptureListeners = new Map<string, Set<(text: string) => void>>();
 const pendingPrompts = new Map<string, string>();
 // Callbacks fired when a container run completes (event:done)
 const completionCallbacks = new Map<string, (sessionId?: string) => void>();
@@ -120,7 +121,22 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
  * Send a message to the appropriate destination.
  * Routes to SSE listener if one exists, otherwise buffers.
  */
-async function sendMessage(chatJid: string, text: string): Promise<void> {
+interface SendMessageOptions {
+  dropIfNoListener?: boolean;
+}
+
+async function sendMessage(
+  chatJid: string,
+  text: string,
+  options?: SendMessageOptions,
+): Promise<void> {
+  const captureListeners = messageCaptureListeners.get(chatJid);
+  if (captureListeners) {
+    for (const capture of captureListeners) {
+      capture(text);
+    }
+  }
+
   const listener = outputListeners.get(chatJid);
   if (listener) {
     listener({
@@ -128,6 +144,10 @@ async function sendMessage(chatJid: string, text: string): Promise<void> {
       result: text,
     });
   } else {
+    if (options?.dropIfNoListener) {
+      logger.debug({ chatJid }, 'Message dropped (no SSE listener)');
+      return;
+    }
     // Buffer for later retrieval
     let buffer = messageBuffers.get(chatJid);
     if (!buffer) {
@@ -140,6 +160,31 @@ async function sendMessage(chatJid: string, text: string): Promise<void> {
       'Message buffered (no SSE listener)',
     );
   }
+}
+
+function beginChatOutputCapture(chatJid: string): () => string[] {
+  const captured: string[] = [];
+  const capture = (text: string) => {
+    captured.push(text);
+  };
+
+  let listeners = messageCaptureListeners.get(chatJid);
+  if (!listeners) {
+    listeners = new Set<(text: string) => void>();
+    messageCaptureListeners.set(chatJid, listeners);
+  }
+  listeners.add(capture);
+
+  return () => {
+    const current = messageCaptureListeners.get(chatJid);
+    if (current) {
+      current.delete(capture);
+      if (current.size === 0) {
+        messageCaptureListeners.delete(chatJid);
+      }
+    }
+    return captured;
+  };
 }
 
 /**
@@ -382,6 +427,7 @@ function startIpcWatcher(): void {
                   await sendMessage(
                     data.chatJid,
                     `${ASSISTANT_NAME}: ${data.text}`,
+                    { dropIfNoListener: true },
                   );
                   logger.info(
                     { chatJid: data.chatJid, sourceGroup },
@@ -1189,6 +1235,7 @@ async function main(): Promise<void> {
     onProcess: (groupJid, proc, containerName, groupFolder) =>
       queue.registerProcess(groupJid, proc, containerName, groupFolder),
     sendMessage,
+    beginChatOutputCapture,
     assistantName: ASSISTANT_NAME,
   });
   startIpcWatcher();
