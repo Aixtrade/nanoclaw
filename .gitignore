@@ -35,6 +35,10 @@ __pycache__/
 
 agents-sdk-docs
 
+# User skills (user-extensible, not tracked)
+container-agno/skills-user/*
+!container-agno/skills-user/.gitkeep
+
 # Desktop app build artifacts
 desktop/node_modules/
 desktop/dist/

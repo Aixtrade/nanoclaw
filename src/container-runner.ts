@@ -173,10 +173,14 @@ function buildVolumeMounts(
     }, null, 2) + '\n');
   }
 
-  // Sync skills from container-agno/skills/ into each group's .claude/skills/
-  const skillsSrc = path.join(bundleRoot, 'container-agno', 'skills');
+  // Sync skills from container-agno/skills/ and skills-user/ into each group's .claude/skills/
+  const skillsDirs = [
+    path.join(bundleRoot, 'container-agno', 'skills'),
+    path.join(bundleRoot, 'container-agno', 'skills-user'),
+  ];
   const skillsDst = path.join(groupSessionsDir, 'skills');
-  if (fs.existsSync(skillsSrc)) {
+  for (const skillsSrc of skillsDirs) {
+    if (!fs.existsSync(skillsSrc)) continue;
     for (const skillDir of fs.readdirSync(skillsSrc)) {
       const srcDir = path.join(skillsSrc, skillDir);
       if (!fs.statSync(srcDir).isDirectory()) continue;
