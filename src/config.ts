@@ -50,8 +50,33 @@ export const MAX_CONCURRENT_CONTAINERS = Math.max(
   1,
   parseInt(process.env.MAX_CONCURRENT_CONTAINERS || '5', 10) || 5,
 );
+export const TASK_COMPLETION_WEBHOOK_URL = (
+  process.env.TASK_COMPLETION_WEBHOOK_URL || ''
+).trim();
 
 // Timezone for scheduled tasks (cron expressions, etc.)
 // Uses system timezone by default
 export const TIMEZONE =
   process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+/**
+ * Parse a naive (no timezone suffix) ISO timestamp as if it were in TIMEZONE,
+ * returning a proper UTC Date. This avoids the bug where `new Date(naiveISO)`
+ * uses the host system timezone, which may differ from the configured TIMEZONE.
+ */
+export function parseLocalTimestamp(naiveISO: string): Date | null {
+  const m = naiveISO.match(
+    /(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):?(\d{2})?/,
+  );
+  if (!m) return null;
+  const [, y, mo, d, h, min, sec] = m;
+  // Treat the components as UTC to get a reference point
+  const asUTC = Date.UTC(+y, +mo - 1, +d, +h, +min, +(sec || 0));
+  // Find what local time asUTC maps to in TIMEZONE
+  const inTZ = new Date(asUTC).toLocaleString('sv-SE', { timeZone: TIMEZONE });
+  const asUTC2 = Date.parse(inTZ.replace(' ', 'T') + 'Z');
+  // offset = how far ahead TIMEZONE is from UTC
+  const offset = asUTC2 - asUTC;
+  // The user meant naiveISO in TIMEZONE, so: UTC = components_as_utc - offset
+  return new Date(asUTC - offset);
+}

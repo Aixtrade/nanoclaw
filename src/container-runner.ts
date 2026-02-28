@@ -15,6 +15,7 @@ import {
   DATA_DIR,
   GROUPS_DIR,
   HTTP_PORT,
+  TIMEZONE,
 } from './config.js';
 import { logger } from './logger.js';
 import { validateAdditionalMounts } from './mount-security.js';
@@ -276,6 +277,9 @@ function buildVolumeMounts(
 
 function buildContainerArgs(mounts: VolumeMount[], containerName: string): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
+
+  // Pass timezone so container agent uses correct local time for scheduling
+  args.push('-e', `TZ=${TIMEZONE}`);
 
   // --mount for readonly, -v for read-write
   for (const mount of mounts) {

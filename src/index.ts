@@ -17,6 +17,7 @@ import {
   MAX_REQUEST_BODY_BYTES,
   STORE_DIR,
   TIMEZONE,
+  parseLocalTimestamp,
 } from './config.js';
 import {
   AvailableGroup,
@@ -531,8 +532,8 @@ async function processTaskIpc(
           }
           nextRun = new Date(Date.now() + ms).toISOString();
         } else if (scheduleType === 'once') {
-          const scheduled = new Date(data.schedule_value);
-          if (isNaN(scheduled.getTime())) {
+          const scheduled = parseLocalTimestamp(data.schedule_value);
+          if (!scheduled || isNaN(scheduled.getTime())) {
             logger.warn(
               { scheduleValue: data.schedule_value },
               'Invalid timestamp',

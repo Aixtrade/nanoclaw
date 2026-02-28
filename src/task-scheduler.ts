@@ -8,10 +8,16 @@ import {
   IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
   SCHEDULER_POLL_INTERVAL,
+  TASK_COMPLETION_WEBHOOK_URL,
   TIMEZONE,
 } from './config.js';
-import { ContainerOutput, runContainerAgent, writeTasksSnapshot } from './container-runner.js';
 import {
+  ContainerOutput,
+  runContainerAgent,
+  writeTasksSnapshot,
+} from './container-runner.js';
+import {
+  claimTaskForRun,
   getAllTasks,
   getDueTasks,
   getTaskById,
@@ -26,9 +32,56 @@ export interface SchedulerDependencies {
   registeredGroups: () => Record<string, RegisteredGroup>;
   getSessions: () => Record<string, string>;
   queue: GroupQueue;
-  onProcess: (groupJid: string, proc: ChildProcess, containerName: string, groupFolder: string) => void;
+  onProcess: (
+    groupJid: string,
+    proc: ChildProcess,
+    containerName: string,
+    groupFolder: string,
+  ) => void;
   sendMessage: (jid: string, text: string) => Promise<void>;
   assistantName: string;
+}
+
+interface TaskCompletionWebhookPayload {
+  taskId: string;
+  groupFolder: string;
+  chatJid: string;
+  scheduleType: ScheduledTask['schedule_type'];
+  scheduleValue: string;
+  durationMs: number;
+  runAt: string;
+  nextRun: string | null;
+  status: ScheduledTask['status'];
+  success: boolean;
+  resultSummary: string;
+  error: string | null;
+}
+
+async function notifyTaskCompletion(
+  payload: TaskCompletionWebhookPayload,
+): Promise<void> {
+  if (!TASK_COMPLETION_WEBHOOK_URL) return;
+
+  try {
+    const response = await fetch(TASK_COMPLETION_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (!response.ok) {
+      logger.warn(
+        { status: response.status, taskId: payload.taskId },
+        'Task completion webhook request failed',
+      );
+    }
+  } catch (err) {
+    logger.warn(
+      { err, taskId: payload.taskId },
+      'Task completion webhook request error',
+    );
+  }
 }
 
 async function runTask(
@@ -62,6 +115,11 @@ async function runTask(
       result: null,
       error: `Group not found: ${task.group_folder}`,
     });
+    updateTaskAfterRun(
+      task.id,
+      null,
+      `Error: Group not found: ${task.group_folder}`,
+    );
     return;
   }
 
@@ -97,7 +155,10 @@ async function runTask(
   const resetIdleTimer = () => {
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
-      logger.debug({ taskId: task.id }, 'Scheduled task idle timeout, closing container stdin');
+      logger.debug(
+        { taskId: task.id },
+        'Scheduled task idle timeout, closing container stdin',
+      );
       deps.queue.closeStdin(task.chat_jid);
     }, IDLE_TIMEOUT);
   };
@@ -113,14 +174,20 @@ async function runTask(
         isMain,
         isScheduledTask: true,
       },
-      (proc, containerName) => deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),
+      (proc, containerName) =>
+        deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),
       async (streamedOutput: ContainerOutput) => {
         if (streamedOutput.result) {
           result = streamedOutput.result;
           // Forward result to user (strip <internal> tags)
-          const text = streamedOutput.result.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+          const text = streamedOutput.result
+            .replace(/<internal>[\s\S]*?<\/internal>/g, '')
+            .trim();
           if (text) {
-            await deps.sendMessage(task.chat_jid, `${deps.assistantName}: ${text}`);
+            await deps.sendMessage(
+              task.chat_jid,
+              `${deps.assistantName}: ${text}`,
+            );
           }
           // Only reset idle timer on actual results, not session-update markers
           resetIdleTimer();
@@ -179,6 +246,24 @@ async function runTask(
       ? result.slice(0, 200)
       : 'Completed';
   updateTaskAfterRun(task.id, nextRun, resultSummary);
+
+  const updatedTask = getTaskById(task.id);
+  const finalStatus =
+    updatedTask?.status ?? (nextRun === null ? 'completed' : 'active');
+  await notifyTaskCompletion({
+    taskId: task.id,
+    groupFolder: task.group_folder,
+    chatJid: task.chat_jid,
+    scheduleType: task.schedule_type,
+    scheduleValue: task.schedule_value,
+    durationMs,
+    runAt: new Date().toISOString(),
+    nextRun,
+    status: finalStatus,
+    success: !error,
+    resultSummary,
+    error,
+  });
 }
 
 let schedulerRunning = false;
@@ -199,16 +284,17 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
       }
 
       for (const task of dueTasks) {
-        // Re-check task status in case it was paused/cancelled
-        const currentTask = getTaskById(task.id);
-        if (!currentTask || currentTask.status !== 'active') {
+        if (!claimTaskForRun(task.id)) {
           continue;
         }
 
-        deps.queue.enqueueTask(
-          currentTask.chat_jid,
-          currentTask.id,
-          () => runTask(currentTask, deps),
+        const currentTask = getTaskById(task.id);
+        if (!currentTask || currentTask.status !== 'running') {
+          continue;
+        }
+
+        deps.queue.enqueueTask(currentTask.chat_jid, currentTask.id, () =>
+          runTask(currentTask, deps),
         );
       }
     } catch (err) {

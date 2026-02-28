@@ -121,6 +121,8 @@ def create_agent(
         ),
         session_id=session_id,
         add_history_to_context=True,
+        add_datetime_to_context=True,
+        timezone_identifier=os.environ.get("TZ", "UTC"),
         num_history_runs=10,
         markdown=False,
         stream=True,
