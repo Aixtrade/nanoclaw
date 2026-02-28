@@ -1,7 +1,7 @@
 import path from 'path';
 
 export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || 'Andy';
-export const HTTP_PORT = parseInt(process.env.PORT || '3000', 10);
+export const HTTP_PORT = parseInt(process.env.PORT || '3100', 10);
 export const HTTP_HOST = process.env.HTTP_HOST || '127.0.0.1';
 export const API_AUTH_TOKEN = process.env.NANOCLAW_API_TOKEN;
 export const MAX_REQUEST_BODY_BYTES = parseInt(
