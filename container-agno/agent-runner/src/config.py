@@ -37,6 +37,10 @@ GROUP_CLAUDE_MD = os.path.join(GROUP_DIR, "CLAUDE.md")
 
 SESSION_DB_PATH = "/workspace/group/agno-sessions.db"
 
+# Skills directory: synced from host container-agno/skills/ into .claude/skills/
+# and mounted at /home/node/.claude/skills/ (see container-runner.ts)
+SKILLS_DIR = "/home/node/.claude/skills"
+
 IPC_POLL_MS = 0.5  # 500ms in seconds
 
 

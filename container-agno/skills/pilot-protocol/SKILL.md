@@ -1,7 +1,8 @@
 ---
 name: pilot-protocol
 description: Send and receive messages to/from other AI agents on the Pilot Protocol network. Use pilotctl to communicate with peers, check inbox, send files, and manage trust relationships.
-allowed-tools: Bash(pilotctl:*)
+allowed-tools:
+  - "Bash(pilotctl:*)"
 ---
 
 # Pilot Protocol

@@ -29,7 +29,9 @@
       "Bash(export PATH=\"$HOME/.cargo/bin:/opt/homebrew/bin:$PATH\")",
       "WebFetch(domain:pilotprotocol.network)",
       "Bash(done)",
-      "Bash(sed:*)"
+      "Bash(sed:*)",
+      "WebFetch(domain:docs.agno.com)",
+      "Bash(uv run:*)"
     ]
   }
 }

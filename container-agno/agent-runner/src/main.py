@@ -23,6 +23,7 @@ from collections.abc import AsyncIterator
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai.like import OpenAILike
+from agno.skills import Skills, LocalSkills
 from agno.tools.duckduckgo import DuckDuckGoTools
 from pathlib import Path
 
@@ -32,6 +33,7 @@ from agno.tools.shell import ShellTools
 from .config import (
     GROUP_DIR,
     SESSION_DB_PATH,
+    SKILLS_DIR,
     load_model_config,
     load_nanoclaw_config,
 )
@@ -64,6 +66,28 @@ def read_stdin() -> dict:
     return json.loads(data)
 
 
+def load_skills() -> Skills | None:
+    """Load Agno skills from the mounted skills directory."""
+    skills_path = Path(SKILLS_DIR)
+    if not skills_path.is_dir():
+        log(f"Skills directory not found: {SKILLS_DIR}")
+        return None
+
+    skill_dirs = [d for d in skills_path.iterdir() if d.is_dir() and (d / "SKILL.md").exists()]
+    if not skill_dirs:
+        log("No skills found in skills directory")
+        return None
+
+    try:
+        skills = Skills(loaders=[LocalSkills(str(SKILLS_DIR))])
+        skill_names = skills.get_skill_names()
+        log(f"Loaded {len(skill_names)} skill(s): {', '.join(skill_names)}")
+        return skills
+    except Exception as e:
+        log(f"Failed to load skills: {e}")
+        return None
+
+
 def create_agent(
     model_config,
     system_prompt: str,
@@ -79,6 +103,8 @@ def create_agent(
         max_tokens=model_config.max_tokens,
     )
 
+    skills = load_skills()
+
     agent = Agent(
         model=model,
         tools=[
@@ -87,6 +113,7 @@ def create_agent(
             DuckDuckGoTools(),
             *ipc_tools,
         ],
+        skills=skills,
         instructions=system_prompt,
         db=SqliteDb(
             session_table="agent_sessions",
