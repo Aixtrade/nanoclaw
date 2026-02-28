@@ -22,6 +22,7 @@ import {
   getDueTasks,
   getTaskById,
   logTaskRun,
+  recoverStuckTasks,
   updateTaskAfterRun,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
@@ -60,9 +61,19 @@ interface TaskCompletionWebhookPayload {
 async function notifyTaskCompletion(
   payload: TaskCompletionWebhookPayload,
 ): Promise<void> {
-  if (!TASK_COMPLETION_WEBHOOK_URL) return;
+  if (!TASK_COMPLETION_WEBHOOK_URL) {
+    logger.debug(
+      { taskId: payload.taskId },
+      'TASK_COMPLETION_WEBHOOK_URL not configured, skipping webhook',
+    );
+    return;
+  }
 
   try {
+    logger.info(
+      { taskId: payload.taskId, url: TASK_COMPLETION_WEBHOOK_URL },
+      'Sending task completion webhook',
+    );
     const response = await fetch(TASK_COMPLETION_WEBHOOK_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -74,6 +85,11 @@ async function notifyTaskCompletion(
       logger.warn(
         { status: response.status, taskId: payload.taskId },
         'Task completion webhook request failed',
+      );
+    } else {
+      logger.info(
+        { taskId: payload.taskId, status: response.status },
+        'Task completion webhook sent',
       );
     }
   } catch (err) {
@@ -189,8 +205,19 @@ async function runTask(
               `${deps.assistantName}: ${text}`,
             );
           }
-          // Only reset idle timer on actual results, not session-update markers
           resetIdleTimer();
+        } else if (streamedOutput.status === 'success') {
+          // End-of-turn marker: agent finished its turn.
+          // Scheduled tasks are one-shot — close the container promptly
+          // instead of waiting for the full idle timeout.
+          if (idleTimer) clearTimeout(idleTimer);
+          idleTimer = setTimeout(() => {
+            logger.debug(
+              { taskId: task.id },
+              'Scheduled task turn complete, closing container',
+            );
+            deps.queue.closeStdin(task.chat_jid);
+          }, 3000); // Brief grace period for any final IPC writes
         }
         if (streamedOutput.status === 'error') {
           error = streamedOutput.error || 'Unknown error';
@@ -217,35 +244,53 @@ async function runTask(
     logger.error({ taskId: task.id, error }, 'Task failed');
   }
 
+  // Post-processing: log run, update status, notify webhook.
+  // Wrapped in try/catch so a failure here doesn't leave the task stuck at 'running'.
   const durationMs = Date.now() - startTime;
-
-  logTaskRun({
-    task_id: task.id,
-    run_at: new Date().toISOString(),
-    duration_ms: durationMs,
-    status: error ? 'error' : 'success',
-    result,
-    error,
-  });
-
   let nextRun: string | null = null;
-  if (task.schedule_type === 'cron') {
-    const interval = CronExpressionParser.parse(task.schedule_value, {
-      tz: TIMEZONE,
-    });
-    nextRun = interval.next().toISOString();
-  } else if (task.schedule_type === 'interval') {
-    const ms = parseInt(task.schedule_value, 10);
-    nextRun = new Date(Date.now() + ms).toISOString();
-  }
-  // 'once' tasks have no next run
+  const cleanResult = result
+    ?.replace(/<think>[\s\S]*?<\/think>/g, '')
+    .replace(/<internal>[\s\S]*?<\/internal>/g, '')
+    .trim() || null;
 
-  const resultSummary = error
-    ? `Error: ${error}`
-    : result
-      ? result.slice(0, 200)
-      : 'Completed';
-  updateTaskAfterRun(task.id, nextRun, resultSummary);
+  try {
+    logTaskRun({
+      task_id: task.id,
+      run_at: new Date().toISOString(),
+      duration_ms: durationMs,
+      status: error ? 'error' : 'success',
+      result,
+      error,
+    });
+  } catch (err) {
+    logger.error({ taskId: task.id, err }, 'Failed to log task run');
+  }
+
+  try {
+    if (task.schedule_type === 'cron') {
+      const interval = CronExpressionParser.parse(task.schedule_value, {
+        tz: TIMEZONE,
+      });
+      nextRun = interval.next().toISOString();
+    } else if (task.schedule_type === 'interval') {
+      const ms = parseInt(task.schedule_value, 10);
+      nextRun = new Date(Date.now() + ms).toISOString();
+    }
+    // 'once' tasks have no next run
+
+    const resultSummary = error
+      ? `Error: ${error}`
+      : cleanResult
+        ? cleanResult.slice(0, 200)
+        : 'Completed';
+    updateTaskAfterRun(task.id, nextRun, resultSummary);
+    logger.info(
+      { taskId: task.id, nextRun, status: nextRun ? 'active' : 'completed' },
+      'Task status updated',
+    );
+  } catch (err) {
+    logger.error({ taskId: task.id, err }, 'Failed to update task after run');
+  }
 
   const updatedTask = getTaskById(task.id);
   const finalStatus =
@@ -261,7 +306,11 @@ async function runTask(
     nextRun,
     status: finalStatus,
     success: !error,
-    resultSummary,
+    resultSummary: error
+      ? `Error: ${error}`
+      : cleanResult
+        ? cleanResult.slice(0, 200)
+        : 'Completed',
     error,
   });
 }
@@ -274,6 +323,13 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
     return;
   }
   schedulerRunning = true;
+
+  // Recover tasks stuck in 'running' from a previous crash/restart
+  const recovered = recoverStuckTasks();
+  if (recovered > 0) {
+    logger.info({ recovered }, 'Recovered stuck tasks (running → active)');
+  }
+
   logger.info('Scheduler loop started');
 
   const loop = async () => {

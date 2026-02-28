@@ -125,7 +125,7 @@ def create_agent(
         timezone_identifier=os.environ.get("TZ", "UTC"),
         num_history_runs=10,
         markdown=False,
-        stream=True,
+        stream=False,
     )
 
     return agent
@@ -144,7 +144,12 @@ def _extract_text_chunk(event: object) -> str | None:
     return None
 
 
-async def run_agent_loop(agent: Agent, initial_prompt: str, session_id: str) -> None:
+async def run_agent_loop(
+    agent: Agent,
+    initial_prompt: str,
+    session_id: str,
+    is_scheduled_task: bool = False,
+) -> None:
     """Main query loop: run agent → wait for IPC → repeat."""
     prompt = initial_prompt
 
@@ -155,7 +160,7 @@ async def run_agent_loop(agent: Agent, initial_prompt: str, session_id: str) -> 
             run_result = agent.arun(
                 prompt,
                 session_id=session_id,
-                stream=True,
+                stream=False,
             )
             response_or_stream = await run_result if inspect.isawaitable(run_result) else run_result
 
@@ -218,14 +223,17 @@ async def run_agent_loop(agent: Agent, initial_prompt: str, session_id: str) -> 
                     write_output("success", result_text, session_id)
 
             # End-of-turn marker for host SSE lifecycle.
-            # The host closes one-shot SSE requests when it receives a
-            # success frame with a null result.
             write_output("success", None, session_id)
         except Exception as e:
             error_msg = str(e)
             log(f"Agent error: {error_msg}")
             write_output("error", None, session_id, error_msg)
             return
+
+        # Scheduled tasks: run once and exit — no IPC wait loop
+        if is_scheduled_task:
+            log("Scheduled task completed, exiting")
+            break
 
         # Check if closed during the run
         if should_close():
@@ -290,7 +298,7 @@ async def main() -> None:
     ipc_tools = get_ipc_tools(nc_config.is_main)
     agent = create_agent(model_config, system_prompt, ipc_tools, session_id)
 
-    await run_agent_loop(agent, prompt, session_id)
+    await run_agent_loop(agent, prompt, session_id, nc_config.is_scheduled_task)
 
 
 if __name__ == "__main__":

@@ -92,7 +92,21 @@ export class GroupQueue {
 
     if (state.active) {
       state.pendingTasks.push({ id: taskId, groupJid, fn });
-      logger.debug({ groupJid, taskId }, 'Container active, task queued');
+      // Force-stop the active container so the scheduled task can run promptly.
+      // closeStdin is cooperative (agent must be polling IPC), docker stop is guaranteed.
+      if (state.containerName) {
+        logger.info(
+          { groupJid, taskId, containerName: state.containerName },
+          'Stopping active container to run scheduled task',
+        );
+        exec(`docker stop ${state.containerName}`, { timeout: 15000 }, (err) => {
+          if (err) {
+            logger.warn({ groupJid, containerName: state.containerName, err }, 'Failed to stop container');
+          }
+        });
+      } else {
+        this.closeStdin(groupJid);
+      }
       return;
     }
 
@@ -176,13 +190,21 @@ export class GroupQueue {
         const success = await this.processMessagesFn(groupJid);
         if (success) {
           state.retryCount = 0;
+        } else if (state.pendingTasks.length > 0) {
+          // Container was killed to make way for a scheduled task — skip retry
+          state.retryCount = 0;
         } else {
           this.scheduleRetry(groupJid, state);
         }
       }
     } catch (err) {
-      logger.error({ groupJid, err }, 'Error processing messages for group');
-      this.scheduleRetry(groupJid, state);
+      if (state.pendingTasks.length > 0) {
+        // Container was killed to make way for a scheduled task — skip retry
+        state.retryCount = 0;
+      } else {
+        logger.error({ groupJid, err }, 'Error processing messages for group');
+        this.scheduleRetry(groupJid, state);
+      }
     } finally {
       state.active = false;
       state.process = null;

@@ -349,6 +349,19 @@ export function getDueTasks(): ScheduledTask[] {
     .all(now) as ScheduledTask[];
 }
 
+/**
+ * Recover tasks stuck in 'running' status (e.g. from a crash or restart).
+ * Resets them to 'active' so the scheduler can pick them up again.
+ */
+export function recoverStuckTasks(): number {
+  const result = db
+    .prepare(
+      `UPDATE scheduled_tasks SET status = 'active' WHERE status = 'running'`,
+    )
+    .run();
+  return result.changes;
+}
+
 export function claimTaskForRun(id: string): boolean {
   const result = db
     .prepare(
