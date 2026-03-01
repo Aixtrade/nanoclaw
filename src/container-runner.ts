@@ -50,15 +50,25 @@ function ensurePilotBridge(): boolean {
   if (!fs.existsSync(socketPath)) return false;
 
   try {
-    pilotBridgeProc = spawn('socat', [
-      `TCP-LISTEN:${PILOT_BRIDGE_PORT},fork,reuseaddr`,
-      `UNIX-CONNECT:${socketPath}`,
-    ], { stdio: 'ignore', detached: true });
+    pilotBridgeProc = spawn(
+      'socat',
+      [
+        `TCP-LISTEN:${PILOT_BRIDGE_PORT},fork,reuseaddr`,
+        `UNIX-CONNECT:${socketPath}`,
+      ],
+      { stdio: 'ignore', detached: true },
+    );
     pilotBridgeProc.unref();
-    logger.info({ port: PILOT_BRIDGE_PORT, socket: socketPath }, 'Pilot Protocol bridge started');
+    logger.info(
+      { port: PILOT_BRIDGE_PORT, socket: socketPath },
+      'Pilot Protocol bridge started',
+    );
     return true;
   } catch (err) {
-    logger.warn({ error: err }, 'Failed to start Pilot Protocol bridge (socat not installed?)');
+    logger.warn(
+      { error: err },
+      'Failed to start Pilot Protocol bridge (socat not installed?)',
+    );
     return false;
   }
 }
@@ -76,7 +86,10 @@ export function initPilotWebhook(): void {
   const webhookUrl = `http://localhost:${HTTP_PORT}/api/pilot/webhook`;
   exec(`pilotctl set-webhook ${webhookUrl}`, (err, _stdout, stderr) => {
     if (err) {
-      logger.warn({ err, stderr: stderr?.trim() }, 'Failed to register Pilot webhook');
+      logger.warn(
+        { err, stderr: stderr?.trim() },
+        'Failed to register Pilot webhook',
+      );
     } else {
       logger.info({ webhookUrl }, 'Pilot webhook registered');
     }
@@ -115,6 +128,40 @@ interface VolumeMount {
   readonly: boolean;
 }
 
+function ensureWorldWritableDir(dirPath: string): void {
+  fs.mkdirSync(dirPath, { recursive: true });
+  try {
+    fs.chmodSync(dirPath, 0o777);
+  } catch {
+    // best-effort; continue if chmod is not supported by the filesystem
+  }
+}
+
+function makeWorldReadableWritableFile(filePath: string): void {
+  try {
+    fs.chmodSync(filePath, 0o666);
+  } catch {
+    // best-effort; continue if chmod is not supported by the filesystem
+  }
+}
+
+function ensureContainerWritableGroupDir(groupDir: string): void {
+  ensureWorldWritableDir(groupDir);
+
+  const knownWritableFiles = ['CLAUDE.md', 'agno-sessions.db'];
+  for (const filename of knownWritableFiles) {
+    const filePath = path.join(groupDir, filename);
+    if (fs.existsSync(filePath)) {
+      makeWorldReadableWritableFile(filePath);
+    }
+  }
+
+  const logsDir = path.join(groupDir, 'logs');
+  if (fs.existsSync(logsDir)) {
+    ensureWorldWritableDir(logsDir);
+  }
+}
+
 function buildVolumeMounts(
   group: RegisteredGroup,
   isMain: boolean,
@@ -125,6 +172,9 @@ function buildVolumeMounts(
   const bundleRoot = BUNDLE_ROOT;
 
   if (isMain) {
+    const groupWorkspaceDir = path.join(GROUPS_DIR, group.folder);
+    ensureContainerWritableGroupDir(groupWorkspaceDir);
+
     // Main gets the user data root mounted
     mounts.push({
       hostPath: dataRoot,
@@ -134,14 +184,17 @@ function buildVolumeMounts(
 
     // Main also gets its group folder as the working directory
     mounts.push({
-      hostPath: path.join(GROUPS_DIR, group.folder),
+      hostPath: groupWorkspaceDir,
       containerPath: '/workspace/group',
       readonly: false,
     });
   } else {
+    const groupWorkspaceDir = path.join(GROUPS_DIR, group.folder);
+    ensureContainerWritableGroupDir(groupWorkspaceDir);
+
     // Other groups only get their own folder
     mounts.push({
-      hostPath: path.join(GROUPS_DIR, group.folder),
+      hostPath: groupWorkspaceDir,
       containerPath: '/workspace/group',
       readonly: false,
     });
@@ -166,13 +219,21 @@ function buildVolumeMounts(
     group.folder,
     '.claude',
   );
-  fs.mkdirSync(groupSessionsDir, { recursive: true });
+  ensureWorldWritableDir(groupSessionsDir);
   const settingsFile = path.join(groupSessionsDir, 'settings.json');
   if (!fs.existsSync(settingsFile)) {
-    fs.writeFileSync(settingsFile, JSON.stringify({
-      env: { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1' },
-    }, null, 2) + '\n');
+    fs.writeFileSync(
+      settingsFile,
+      JSON.stringify(
+        {
+          env: { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1' },
+        },
+        null,
+        2,
+      ) + '\n',
+    );
   }
+  makeWorldReadableWritableFile(settingsFile);
 
   // Sync skills from container-agno/skills/ and skills-user/ into each group's .claude/skills/
   const skillsDirs = [
@@ -180,6 +241,7 @@ function buildVolumeMounts(
     path.join(bundleRoot, 'container-agno', 'skills-user'),
   ];
   const skillsDst = path.join(groupSessionsDir, 'skills');
+  ensureWorldWritableDir(skillsDst);
   for (const skillsSrc of skillsDirs) {
     if (!fs.existsSync(skillsSrc)) continue;
     for (const skillDir of fs.readdirSync(skillsSrc)) {
@@ -198,9 +260,10 @@ function buildVolumeMounts(
   // Per-group IPC namespace: each group gets its own IPC directory
   // This prevents cross-group privilege escalation via IPC
   const groupIpcDir = path.join(DATA_DIR, 'ipc', group.folder);
-  fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
-  fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
-  fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
+  ensureWorldWritableDir(groupIpcDir);
+  ensureWorldWritableDir(path.join(groupIpcDir, 'messages'));
+  ensureWorldWritableDir(path.join(groupIpcDir, 'tasks'));
+  ensureWorldWritableDir(path.join(groupIpcDir, 'input'));
   mounts.push({
     hostPath: groupIpcDir,
     containerPath: '/workspace/ipc',
@@ -215,9 +278,13 @@ function buildVolumeMounts(
   if (fs.existsSync(envFile)) {
     const envContent = fs.readFileSync(envFile, 'utf-8');
     const allowedVars = [
-      'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY',
-      'AGNO_MODEL_ID', 'AGNO_API_KEY', 'AGNO_BASE_URL',
-      'AGNO_TEMPERATURE', 'AGNO_MAX_TOKENS',
+      'CLAUDE_CODE_OAUTH_TOKEN',
+      'ANTHROPIC_API_KEY',
+      'AGNO_MODEL_ID',
+      'AGNO_API_KEY',
+      'AGNO_BASE_URL',
+      'AGNO_TEMPERATURE',
+      'AGNO_MAX_TOKENS',
       'PILOT_BRIDGE_PORT',
     ];
     const filteredLines = envContent.split('\n').filter((line) => {
@@ -250,7 +317,12 @@ function buildVolumeMounts(
 
   // Mount agent-runner source from host — recompiled on container startup.
   // Bypasses Docker's build cache for code changes.
-  const agentRunnerSrc = path.join(bundleRoot, 'container-agno', 'agent-runner', 'src');
+  const agentRunnerSrc = path.join(
+    bundleRoot,
+    'container-agno',
+    'agent-runner',
+    'src',
+  );
   mounts.push({
     hostPath: agentRunnerSrc,
     containerPath: '/app/src',
@@ -270,7 +342,10 @@ function buildVolumeMounts(
   return mounts;
 }
 
-function buildContainerArgs(mounts: VolumeMount[], containerName: string): string[] {
+function buildContainerArgs(
+  mounts: VolumeMount[],
+  containerName: string,
+): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
   // Pass timezone so container agent uses correct local time for scheduling
@@ -434,10 +509,16 @@ export async function runContainerAgent(
 
     const killOnTimeout = () => {
       timedOut = true;
-      logger.error({ group: group.name, containerName }, 'Container timeout, stopping gracefully');
+      logger.error(
+        { group: group.name, containerName },
+        'Container timeout, stopping gracefully',
+      );
       exec(`docker stop ${containerName}`, { timeout: 15000 }, (err) => {
         if (err) {
-          logger.warn({ group: group.name, containerName, err }, 'Graceful stop failed, force killing');
+          logger.warn(
+            { group: group.name, containerName, err },
+            'Graceful stop failed, force killing',
+          );
           container.kill('SIGKILL');
         }
       });
@@ -458,14 +539,17 @@ export async function runContainerAgent(
       if (timedOut) {
         const ts = new Date().toISOString().replace(/[:.]/g, '-');
         const timeoutLog = path.join(logsDir, `container-${ts}.log`);
-        fs.writeFileSync(timeoutLog, [
-          `=== Container Run Log (TIMEOUT) ===`,
-          `Timestamp: ${new Date().toISOString()}`,
-          `Group: ${group.name}`,
-          `Container: ${containerName}`,
-          `Duration: ${duration}ms`,
-          `Exit Code: ${code}`,
-        ].join('\n'));
+        fs.writeFileSync(
+          timeoutLog,
+          [
+            `=== Container Run Log (TIMEOUT) ===`,
+            `Timestamp: ${new Date().toISOString()}`,
+            `Group: ${group.name}`,
+            `Container: ${containerName}`,
+            `Duration: ${duration}ms`,
+            `Exit Code: ${code}`,
+          ].join('\n'),
+        );
 
         logger.error(
           { group: group.name, containerName, duration, code },
@@ -482,7 +566,8 @@ export async function runContainerAgent(
 
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const logFile = path.join(logsDir, `container-${timestamp}.log`);
-      const isVerbose = process.env.LOG_LEVEL === 'debug' || process.env.LOG_LEVEL === 'trace';
+      const isVerbose =
+        process.env.LOG_LEVEL === 'debug' || process.env.LOG_LEVEL === 'trace';
 
       const logLines = [
         `=== Container Run Log ===`,
@@ -625,7 +710,10 @@ export async function runContainerAgent(
 
     container.on('error', (err) => {
       clearTimeout(timeout);
-      logger.error({ group: group.name, containerName, error: err }, 'Container spawn error');
+      logger.error(
+        { group: group.name, containerName, error: err },
+        'Container spawn error',
+      );
       resolve({
         status: 'error',
         result: null,
@@ -650,7 +738,7 @@ export function writeTasksSnapshot(
 ): void {
   // Write filtered tasks to the group's IPC directory
   const groupIpcDir = path.join(DATA_DIR, 'ipc', groupFolder);
-  fs.mkdirSync(groupIpcDir, { recursive: true });
+  ensureWorldWritableDir(groupIpcDir);
 
   // Main sees all tasks, others only see their own
   const filteredTasks = isMain
@@ -659,6 +747,7 @@ export function writeTasksSnapshot(
 
   const tasksFile = path.join(groupIpcDir, 'current_tasks.json');
   fs.writeFileSync(tasksFile, JSON.stringify(filteredTasks, null, 2));
+  makeWorldReadableWritableFile(tasksFile);
 }
 
 export interface AvailableGroup {
@@ -680,7 +769,7 @@ export function writeGroupsSnapshot(
   registeredJids: Set<string>,
 ): void {
   const groupIpcDir = path.join(DATA_DIR, 'ipc', groupFolder);
-  fs.mkdirSync(groupIpcDir, { recursive: true });
+  ensureWorldWritableDir(groupIpcDir);
 
   // Main sees all groups; others see nothing (they can't activate groups)
   const visibleGroups = isMain ? groups : [];
@@ -697,4 +786,5 @@ export function writeGroupsSnapshot(
       2,
     ),
   );
+  makeWorldReadableWritableFile(groupsFile);
 }

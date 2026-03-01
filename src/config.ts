@@ -65,9 +65,7 @@ export const TIMEZONE =
  * uses the host system timezone, which may differ from the configured TIMEZONE.
  */
 export function parseLocalTimestamp(naiveISO: string): Date | null {
-  const m = naiveISO.match(
-    /(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):?(\d{2})?/,
-  );
+  const m = naiveISO.match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):?(\d{2})?/);
   if (!m) return null;
   const [, y, mo, d, h, min, sec] = m;
   // Treat the components as UTC to get a reference point

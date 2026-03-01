@@ -30,13 +30,26 @@ def set_context(chat_jid: str, group_folder: str, is_main: bool) -> None:
 def _write_ipc_file(directory: str, data: dict) -> str:
     """Atomic write: temp file then rename. Returns filename."""
     os.makedirs(directory, exist_ok=True)
+    try:
+        # Host/container UIDs may differ; keep IPC dirs writable by both sides.
+        os.chmod(directory, 0o777)
+    except OSError:
+        pass
     rand = "".join(random.choices(string.ascii_lowercase + string.digits, k=6))
     filename = f"{int(datetime.now().timestamp() * 1000)}-{rand}.json"
     filepath = os.path.join(directory, filename)
     temp_path = f"{filepath}.tmp"
     with open(temp_path, "w") as f:
         json.dump(data, f, indent=2)
+    try:
+        os.chmod(temp_path, 0o666)
+    except OSError:
+        pass
     os.rename(temp_path, filepath)
+    try:
+        os.chmod(filepath, 0o666)
+    except OSError:
+        pass
     return filename
 
 

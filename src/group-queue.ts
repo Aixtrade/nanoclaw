@@ -99,11 +99,18 @@ export class GroupQueue {
           { groupJid, taskId, containerName: state.containerName },
           'Stopping active container to run scheduled task',
         );
-        exec(`docker stop ${state.containerName}`, { timeout: 15000 }, (err) => {
-          if (err) {
-            logger.warn({ groupJid, containerName: state.containerName, err }, 'Failed to stop container');
-          }
-        });
+        exec(
+          `docker stop ${state.containerName}`,
+          { timeout: 15000 },
+          (err) => {
+            if (err) {
+              logger.warn(
+                { groupJid, containerName: state.containerName, err },
+                'Failed to stop container',
+              );
+            }
+          },
+        );
       } else {
         this.closeStdin(groupJid);
       }
@@ -126,7 +133,12 @@ export class GroupQueue {
     this.runTask(groupJid, { id: taskId, groupJid, fn });
   }
 
-  registerProcess(groupJid: string, proc: ChildProcess, containerName: string, groupFolder?: string): void {
+  registerProcess(
+    groupJid: string,
+    proc: ChildProcess,
+    containerName: string,
+    groupFolder?: string,
+  ): void {
     const state = this.getGroup(groupJid);
     state.process = proc;
     state.containerName = containerName;
@@ -143,12 +155,22 @@ export class GroupQueue {
 
     const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
     try {
-      fs.mkdirSync(inputDir, { recursive: true });
+      this.ensureIpcInputDir(inputDir);
       const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}.json`;
       const filepath = path.join(inputDir, filename);
       const tempPath = `${filepath}.tmp`;
       fs.writeFileSync(tempPath, JSON.stringify({ type: 'message', text }));
+      try {
+        fs.chmodSync(tempPath, 0o666);
+      } catch {
+        // best-effort; write may still succeed without chmod support
+      }
       fs.renameSync(tempPath, filepath);
+      try {
+        fs.chmodSync(filepath, 0o666);
+      } catch {
+        // best-effort; write may still succeed without chmod support
+      }
       return true;
     } catch {
       return false;
@@ -164,10 +186,27 @@ export class GroupQueue {
 
     const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
     try {
-      fs.mkdirSync(inputDir, { recursive: true });
-      fs.writeFileSync(path.join(inputDir, '_close'), '');
+      this.ensureIpcInputDir(inputDir);
+      const sentinelPath = path.join(inputDir, '_close');
+      fs.writeFileSync(sentinelPath, '');
+      try {
+        fs.chmodSync(sentinelPath, 0o666);
+      } catch {
+        // best-effort; write may still succeed without chmod support
+      }
     } catch {
       // ignore
+    }
+  }
+
+  private ensureIpcInputDir(inputDir: string): void {
+    fs.mkdirSync(inputDir, { recursive: true });
+    try {
+      // Containers may run with a different UID than the host process on Linux.
+      // Keep IPC input world-writable so the container can read and unlink files.
+      fs.chmodSync(inputDir, 0o777);
+    } catch {
+      // best-effort; some filesystems may restrict chmod
     }
   }
 
