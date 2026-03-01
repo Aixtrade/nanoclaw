@@ -10,7 +10,7 @@ class ModelConfig:
     api_key: str
     base_url: str
     temperature: float = 0.7
-    max_tokens: int = 8192
+    max_tokens: int = 102400
 
 
 @dataclass
@@ -58,7 +58,7 @@ def load_model_config() -> ModelConfig:
         raise ValueError("AGNO_BASE_URL environment variable is required")
 
     temperature = float(os.environ.get("AGNO_TEMPERATURE", "0.7"))
-    max_tokens = int(os.environ.get("AGNO_MAX_TOKENS", "8192"))
+    max_tokens = int(os.environ.get("AGNO_MAX_TOKENS", "102400"))
 
     return ModelConfig(
         model_id=model_id,

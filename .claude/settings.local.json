@@ -31,7 +31,8 @@
       "Bash(done)",
       "Bash(sed:*)",
       "WebFetch(domain:docs.agno.com)",
-      "Bash(uv run:*)"
+      "Bash(uv run:*)",
+      "WebFetch(domain:docs.polymarket.com)"
     ]
   }
 }
