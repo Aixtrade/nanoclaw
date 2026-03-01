@@ -28,6 +28,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from pathlib import Path
 
 from agno.tools.file import FileTools
+from agno.tools.python import PythonTools
 from agno.tools.shell import ShellTools
 
 from .config import (
@@ -109,6 +110,7 @@ def create_agent(
         model=model,
         tools=[
             FileTools(base_dir=Path(GROUP_DIR)),
+            PythonTools(base_dir=Path(GROUP_DIR)),
             ShellTools(base_dir=GROUP_DIR),
             DuckDuckGoTools(),
             *ipc_tools,
