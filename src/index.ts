@@ -9,6 +9,7 @@ import {
   ASSISTANT_NAME,
   API_AUTH_TOKEN,
   DATA_DIR,
+  GROUPS_DIR,
   HTTP_HOST,
   HTTP_PORT,
   IDLE_TIMEOUT,
@@ -947,13 +948,84 @@ async function handleCreateGroup(
   jsonResponse(res, 201, { id: chatJid, name, folder: safeFolder });
 }
 
+function writeFileAtomic(filePath: string, content: string): void {
+  const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+  fs.writeFileSync(tempPath, content, 'utf-8');
+  fs.renameSync(tempPath, filePath);
+}
+
+async function handleUpdateGroupMemory(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  rawGroupId: string,
+): Promise<void> {
+  let body: string;
+  try {
+    body = await parseBody(req);
+  } catch (err) {
+    if (err instanceof Error && err.message === 'REQUEST_BODY_TOO_LARGE') {
+      jsonResponse(res, 413, { error: 'Request body too large' });
+      return;
+    }
+    jsonResponse(res, 400, { error: 'Invalid request body' });
+    return;
+  }
+
+  let parsed: { content?: string };
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    jsonResponse(res, 400, { error: 'Invalid JSON' });
+    return;
+  }
+
+  let groupFolder: string;
+  try {
+    groupFolder = normalizeGroupId(rawGroupId);
+  } catch {
+    jsonResponse(res, 400, { error: 'Invalid "groupId" field' });
+    return;
+  }
+
+  if (typeof parsed.content !== 'string') {
+    jsonResponse(res, 400, { error: 'Missing "content" field' });
+    return;
+  }
+
+  const groupDir = path.join(GROUPS_DIR, groupFolder);
+  const memoryFile = path.join(groupDir, 'CLAUDE.md');
+  const normalizedContent = parsed.content.endsWith('\n')
+    ? parsed.content
+    : `${parsed.content}\n`;
+
+  try {
+    fs.mkdirSync(groupDir, { recursive: true });
+    writeFileAtomic(memoryFile, normalizedContent);
+  } catch (err) {
+    logger.error({ err, groupFolder }, 'Failed to update group memory file');
+    jsonResponse(res, 500, { error: 'Failed to save group memory' });
+    return;
+  }
+
+  jsonResponse(res, 200, {
+    status: 'ok',
+    groupId: groupFolder,
+    path: `groups/${groupFolder}/CLAUDE.md`,
+    bytes: Buffer.byteLength(normalizedContent, 'utf-8'),
+  });
+}
+
 async function handlePilotWebhook(
   req: http.IncomingMessage,
   res: http.ServerResponse,
 ): Promise<void> {
   // Only accept from localhost
   const remoteAddr = req.socket.remoteAddress;
-  if (remoteAddr !== '127.0.0.1' && remoteAddr !== '::1' && remoteAddr !== '::ffff:127.0.0.1') {
+  if (
+    remoteAddr !== '127.0.0.1' &&
+    remoteAddr !== '::1' &&
+    remoteAddr !== '::ffff:127.0.0.1'
+  ) {
     jsonResponse(res, 403, { error: 'Forbidden' });
     return;
   }
@@ -1072,8 +1144,14 @@ function startHttpServer(): void {
     const origin = req.headers.origin;
     if (origin) {
       res.setHeader('Access-Control-Allow-Origin', origin);
-      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      res.setHeader(
+        'Access-Control-Allow-Methods',
+        'GET, POST, DELETE, OPTIONS',
+      );
+      res.setHeader(
+        'Access-Control-Allow-Headers',
+        'Content-Type, Authorization',
+      );
     }
     if (method === 'OPTIONS') {
       res.writeHead(204);
@@ -1112,6 +1190,19 @@ function startHttpServer(): void {
       // POST /api/groups
       if (method === 'POST' && pathname === '/api/groups') {
         await handleCreateGroup(req, res);
+        return;
+      }
+
+      // POST /api/groups/:groupId/memory
+      const groupMemoryMatch = pathname.match(
+        /^\/api\/groups\/([^/]+)\/memory$/,
+      );
+      if (method === 'POST' && groupMemoryMatch) {
+        await handleUpdateGroupMemory(
+          req,
+          res,
+          decodeURIComponent(groupMemoryMatch[1]),
+        );
         return;
       }
 
