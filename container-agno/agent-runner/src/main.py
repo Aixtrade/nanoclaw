@@ -21,6 +21,7 @@ import uuid
 from collections.abc import AsyncIterator
 
 from agno.agent import Agent
+from agno.compression.manager import CompressionManager
 from agno.db.sqlite import SqliteDb
 from agno.models.openai.like import OpenAILike
 from agno.skills import Skills, LocalSkills
@@ -106,6 +107,12 @@ def create_agent(
 
     skills = load_skills()
 
+    compression_manager = CompressionManager(
+        model=model,
+        compress_token_limit=80000,
+        compress_tool_results_limit=3,
+    )
+
     agent = Agent(
         model=model,
         tools=[
@@ -125,7 +132,9 @@ def create_agent(
         add_history_to_context=True,
         add_datetime_to_context=True,
         timezone_identifier=os.environ.get("TZ", "UTC"),
-        num_history_runs=10,
+        num_history_runs=5,
+        compress_tool_results=True,
+        compression_manager=compression_manager,
         markdown=False,
         stream=False,
     )
