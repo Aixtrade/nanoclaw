@@ -33,6 +33,7 @@ export interface SchedulerDependencies {
   registeredGroups: () => Record<string, RegisteredGroup>;
   getSessions: () => Record<string, string>;
   queue: GroupQueue;
+  refreshTaskSnapshots: () => void;
   onProcess: (
     groupJid: string,
     proc: ChildProcess,
@@ -142,6 +143,7 @@ async function runTask(
       null,
       `Error: Group not found: ${task.group_folder}`,
     );
+    deps.refreshTaskSnapshots();
     return;
   }
 
@@ -258,10 +260,11 @@ async function runTask(
   // Wrapped in try/catch so a failure here doesn't leave the task stuck at 'running'.
   const durationMs = Date.now() - startTime;
   let nextRun: string | null = null;
-  const cleanResult = result
-    ?.replace(/<think>[\s\S]*?<\/think>/g, '')
-    .replace(/<internal>[\s\S]*?<\/internal>/g, '')
-    .trim() || null;
+  const cleanResult =
+    result
+      ?.replace(/<think>[\s\S]*?<\/think>/g, '')
+      .replace(/<internal>[\s\S]*?<\/internal>/g, '')
+      .trim() || null;
 
   try {
     logTaskRun({
@@ -325,6 +328,9 @@ async function runTask(
     chatOutput,
     error,
   });
+
+  // Keep container task snapshots aligned with DB after status transitions.
+  deps.refreshTaskSnapshots();
 }
 
 let schedulerRunning = false;

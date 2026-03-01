@@ -70,6 +70,38 @@ const completionCallbacks = new Map<string, (sessionId?: string) => void>();
 // Only one active SSE request per group to avoid stream collisions.
 const activeSseRequests = new Map<string, string>();
 
+function mapTasksForSnapshot(tasks: ReturnType<typeof getAllTasks>): Array<{
+  id: string;
+  groupFolder: string;
+  prompt: string;
+  schedule_type: string;
+  schedule_value: string;
+  status: string;
+  next_run: string | null;
+}> {
+  return tasks.map((t) => ({
+    id: t.id,
+    groupFolder: t.group_folder,
+    prompt: t.prompt,
+    schedule_type: t.schedule_type,
+    schedule_value: t.schedule_value,
+    status: t.status,
+    next_run: t.next_run,
+  }));
+}
+
+function refreshTaskSnapshots(): void {
+  const tasksSnapshot = mapTasksForSnapshot(getAllTasks());
+  const groupFolders = new Set(
+    Object.values(registeredGroups).map((group) => group.folder),
+  );
+
+  for (const groupFolder of groupFolders) {
+    const isMain = groupFolder === MAIN_GROUP_FOLDER;
+    writeTasksSnapshot(groupFolder, isMain, tasksSnapshot);
+  }
+}
+
 function normalizeGroupId(input: string): string {
   const safe = input
     .replace(/[^a-zA-Z0-9_-]/g, '-')
@@ -298,19 +330,7 @@ async function runAgent(
 
   // Update tasks snapshot for container to read (filtered by group)
   const tasks = getAllTasks();
-  writeTasksSnapshot(
-    group.folder,
-    isMain,
-    tasks.map((t) => ({
-      id: t.id,
-      groupFolder: t.group_folder,
-      prompt: t.prompt,
-      schedule_type: t.schedule_type,
-      schedule_value: t.schedule_value,
-      status: t.status,
-      next_run: t.next_run,
-    })),
-  );
+  writeTasksSnapshot(group.folder, isMain, mapTasksForSnapshot(tasks));
 
   // Update available groups snapshot (main group only can see all groups)
   const availableGroups = getAvailableGroups();
@@ -611,6 +631,7 @@ async function processTaskIpc(
           { taskId, sourceGroup, targetFolder, contextMode },
           'Task created via IPC',
         );
+        refreshTaskSnapshots();
       }
       break;
 
@@ -619,6 +640,7 @@ async function processTaskIpc(
         const task = getTaskById(data.taskId);
         if (task && (isMain || task.group_folder === sourceGroup)) {
           updateTask(data.taskId, { status: 'paused' });
+          refreshTaskSnapshots();
           logger.info(
             { taskId: data.taskId, sourceGroup },
             'Task paused via IPC',
@@ -637,6 +659,7 @@ async function processTaskIpc(
         const task = getTaskById(data.taskId);
         if (task && (isMain || task.group_folder === sourceGroup)) {
           updateTask(data.taskId, { status: 'active' });
+          refreshTaskSnapshots();
           logger.info(
             { taskId: data.taskId, sourceGroup },
             'Task resumed via IPC',
@@ -655,6 +678,7 @@ async function processTaskIpc(
         const task = getTaskById(data.taskId);
         if (task && (isMain || task.group_folder === sourceGroup)) {
           deleteTask(data.taskId);
+          refreshTaskSnapshots();
           logger.info(
             { taskId: data.taskId, sourceGroup },
             'Task cancelled via IPC',
@@ -1323,6 +1347,7 @@ async function main(): Promise<void> {
     registeredGroups: () => registeredGroups,
     getSessions: () => sessions,
     queue,
+    refreshTaskSnapshots,
     onProcess: (groupJid, proc, containerName, groupFolder) =>
       queue.registerProcess(groupJid, proc, containerName, groupFolder),
     sendMessage,
@@ -1330,6 +1355,7 @@ async function main(): Promise<void> {
     assistantName: ASSISTANT_NAME,
   });
   startIpcWatcher();
+  refreshTaskSnapshots();
 
   // Start HTTP server
   startHttpServer();
